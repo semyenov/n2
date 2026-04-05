@@ -6,8 +6,7 @@
  */
 import * as Schema from "effect/Schema"
 import * as Option from "effect/Option"
-import { Rpc } from "@effect/rpc"
-import { Entity, ClusterSchema } from "@effect/cluster"
+import * as N2 from "../../framework/helpers/index.js"
 
 // ---------------------------------------------------------------------------
 // Line Item
@@ -134,38 +133,13 @@ export const OrderCommands = {
 } as const
 
 // ---------------------------------------------------------------------------
-// Entity definition (with primaryKey for cluster routing)
+// Entity definition (derived from command constructors)
 // ---------------------------------------------------------------------------
 
-export const OrderEntity = Entity.make("Order", [
-  Rpc.make("CreateOrder", {
-    payload: { orderId: Schema.String, customerId: Schema.String },
-    primaryKey: ({ orderId }) => orderId,
-    success: CommandResult,
-    error: OrderError
-  }),
-  Rpc.make("AddItem", {
-    payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number },
-    primaryKey: ({ orderId }) => orderId,
-    success: CommandResult,
-    error: OrderError
-  }),
-  Rpc.make("SubmitOrder", {
-    payload: { orderId: Schema.String },
-    primaryKey: ({ orderId }) => orderId,
-    success: CommandResult,
-    error: OrderError
-  }),
-  Rpc.make("CancelOrder", {
-    payload: { orderId: Schema.String, reason: Schema.String },
-    primaryKey: ({ orderId }) => orderId,
-    success: CommandResult,
-    error: OrderError
-  })
-]).annotateRpcs(
-  ClusterSchema.Persisted,
-  true
-)
+export const OrderEntity = N2.makeEntity("Order", OrderCommands, {
+  primaryKey: (p) => p.orderId,
+  persisted: true
+})
 
 // ---------------------------------------------------------------------------
 // RPC group -- derived from Entity protocol (no duplication)

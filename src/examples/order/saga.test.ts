@@ -34,7 +34,7 @@ const BothEntitiesLayer = Layer.mergeAll(
 class SagaError extends Schema.TaggedError<SagaError>()(
   "SagaError",
   { message: Schema.String }
-) {}
+) { }
 
 const CrossAggregateSaga = Workflow.make({
   name: "CrossAggregateSaga",
@@ -58,7 +58,7 @@ const ReserveStockActivity = Activity.make({
 
 const SagaHandlers = CrossAggregateSaga.toLayer(
   (payload, _executionId) =>
-    Effect.gen(function*() {
+    Effect.gen(function* () {
       yield* CreateOrderActivity
       yield* ReserveStockActivity
       return { orderId: payload.orderId, reserved: true as const }
@@ -68,7 +68,7 @@ const SagaHandlers = CrossAggregateSaga.toLayer(
 const SagaLayer = Layer.provideMerge(SagaHandlers, WorkflowEngine.layerMemory)
 
 test("cross-aggregate saga: order + inventory coordination", async () => {
-  await Effect.gen(function*() {
+  await Effect.gen(function* () {
     const result = yield* CrossAggregateSaga.execute({
       orderId: "saga-order-1",
       sku: "SKU-SAGA",
@@ -89,14 +89,14 @@ test("cross-aggregate: both entities via cluster", async () => {
     effect.pipe(Effect.scoped, Effect.provide(ShardingConfig.layer({})), Effect.runPromise)
 
   await run(
-    Effect.gen(function*() {
+    Effect.gen(function* () {
       // Boot both entities
       const makeOrderClient = yield* Entity.makeTestClient(OrderEntity, BothEntitiesLayer)
       const makeInventoryClient = yield* Entity.makeTestClient(InventoryEntity, BothEntitiesLayer)
 
       // Create order
       const orderClient = yield* makeOrderClient("saga-order-2")
-      const orderResult = yield* orderClient.CreateOrder({
+      const orderResult = yield* orderClient.CreateOrder!({
         orderId: "saga-order-2",
         customerId: "cust-saga"
       })
@@ -104,10 +104,10 @@ test("cross-aggregate: both entities via cluster", async () => {
 
       // Restock inventory
       const invClient = yield* makeInventoryClient("SKU-SAGA-2")
-      yield* invClient.ReleaseStock({ sku: "SKU-SAGA-2", quantity: 100, orderId: "restock" })
+      yield* invClient.ReleaseStock!({ sku: "SKU-SAGA-2", quantity: 100, orderId: "restock" })
 
       // Reserve inventory for the order
-      const stockResult = yield* invClient.ReserveStock({
+      const stockResult = yield* invClient.ReserveStock!({
         sku: "SKU-SAGA-2",
         quantity: 5,
         orderId: "saga-order-2"
@@ -117,13 +117,13 @@ test("cross-aggregate: both entities via cluster", async () => {
       expect(stockResult.reserved).toBe(5)
 
       // Add item and submit order
-      yield* orderClient.AddItem({
+      yield* orderClient.AddItem!({
         orderId: "saga-order-2",
         sku: "SKU-SAGA-2",
         quantity: 5,
         price: 20
       })
-      const submitResult = yield* orderClient.SubmitOrder({ orderId: "saga-order-2" })
+      const submitResult = yield* orderClient.SubmitOrder!({ orderId: "saga-order-2" })
       expect(Number(submitResult.revision)).toBe(3)
     })
   )

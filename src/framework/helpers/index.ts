@@ -28,3 +28,5 @@ export {
   type ExecutionErrorContext,
   type ExecutionMode
 } from "./Definition.js"
+
+export { makeEntity } from "./EntityBuilder.js"

@@ -3,8 +3,7 @@
  * Commands are Schema.TaggedRequest.
  */
 import * as Schema from "effect/Schema"
-import { Rpc } from "@effect/rpc"
-import { Entity, ClusterSchema } from "@effect/cluster"
+import * as N2 from "../../framework/helpers/index.js"
 
 // ---------------------------------------------------------------------------
 // Events
@@ -84,20 +83,10 @@ export const InventoryCommands = {
 } as const
 
 // ---------------------------------------------------------------------------
-// Entity
+// Entity (derived from command constructors)
 // ---------------------------------------------------------------------------
 
-export const InventoryEntity = Entity.make("Inventory", [
-  Rpc.make("ReserveStock", {
-    payload: { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String },
-    primaryKey: ({ sku }) => sku,
-    success: StockResult,
-    error: InsufficientStock
-  }),
-  Rpc.make("ReleaseStock", {
-    payload: { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String },
-    primaryKey: ({ sku }) => sku,
-    success: StockResult,
-    error: InsufficientStock
-  })
-]).annotateRpcs(ClusterSchema.Persisted, true)
+export const InventoryEntity = N2.makeEntity("Inventory", InventoryCommands, {
+  primaryKey: (p) => p.sku,
+  persisted: true
+})

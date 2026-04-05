@@ -39,8 +39,9 @@ test("AddItem to draft order produces ItemAdded", async () => {
       new AddItem({ orderId: "o2", sku: "SKU-001", quantity: 2, price: 19.99 })
     ], emptyState)
   )
-  expect(result.events.length).toBe(1)
-  expect((result.events[0] as ItemAdded)._tag).toBe("ItemAdded")
+  expect(result.events.length).toBe(2)
+  expect((result.events[0] as OrderCreated)._tag).toBe("OrderCreated")
+  expect((result.events[1] as ItemAdded)._tag).toBe("ItemAdded")
   expect(result.state.items.length).toBe(1)
 })
 
@@ -52,7 +53,10 @@ test("SubmitOrder with items produces OrderSubmitted", async () => {
       new SubmitOrder({ orderId: "o3" })
     ], emptyState)
   )
-  expect((result.events[0] as OrderSubmitted)._tag).toBe("OrderSubmitted")
+  expect(result.events.length).toBe(3)
+  expect((result.events[0] as OrderCreated)._tag).toBe("OrderCreated")
+  expect((result.events[1] as ItemAdded)._tag).toBe("ItemAdded")
+  expect((result.events[2] as OrderSubmitted)._tag).toBe("OrderSubmitted")
   expect(result.state.status).toBe("submitted")
 })
 
