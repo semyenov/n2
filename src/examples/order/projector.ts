@@ -5,7 +5,6 @@
  * Compare with projector.ts which uses raw `envelope.payload` casting.
  */
 import * as Effect from "effect/Effect"
-import * as HashMap from "effect/HashMap"
 import * as Schema from "effect/Schema"
 import { EventLog } from "@effect/experimental"
 import { OrderEventGroup } from "./events.js"
