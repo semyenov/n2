@@ -137,9 +137,32 @@ export const decide = (
 }
 
 // ---------------------------------------------------------------------------
-// AggregateDefinition (for AggregateRuntime compatibility)
+// handleCommand: decide + evolve in one step
+// This is the primary API for entity handlers and tests.
 // ---------------------------------------------------------------------------
 
+export const handleCommand = (
+  state: OrderState,
+  command: OrderCommand
+): Effect.Effect<
+  { readonly events: ReadonlyArray<OrderEvent>; readonly state: OrderState },
+  OrderError,
+  N2Clock
+> =>
+  Effect.gen(function*() {
+    const events = yield* decide(state, command)
+    let newState = state
+    for (const event of events) {
+      newState = evolve(newState, event)
+    }
+    return { events, state: newState }
+  })
+
+// ---------------------------------------------------------------------------
+// AggregateDefinition (kept for backward compat with AggregateRuntime)
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use handleCommand + decide + evolve directly */
 export const OrderAggregate = AggregateDefinition.define({
   name: "Order" as const,
   initialState: initialOrderState,

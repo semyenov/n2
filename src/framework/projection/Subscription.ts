@@ -22,7 +22,6 @@ import { DeadLetter } from "./DeadLetter.js"
 import { KafkaConsumer, type KafkaMessage } from "../runtime/KafkaConsumer.js"
 import { EventEnvelope } from "../contracts/EventEnvelope.js"
 import { DLQEnvelope } from "../contracts/DLQEnvelope.js"
-import { empty as emptyMetadata } from "../contracts/Metadata.js"
 
 /**
  * @since 1.0.0
@@ -101,7 +100,6 @@ export const make = <State>(
                   aggregateType: Schema.decodeSync(EntityType.EntityType)("unknown"),
                   revision: 0,
                   occurredAt: now,
-                  metadata: emptyMetadata,
                   payload: message.value
                 }),
                 error: String(error),

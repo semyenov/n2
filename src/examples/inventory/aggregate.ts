@@ -61,6 +61,23 @@ export const decide = (
     }
   })
 
+export const handleCommand = (
+  state: InventoryState,
+  command: InventoryCommand
+): Effect.Effect<
+  { readonly events: ReadonlyArray<InventoryEvent>; readonly state: InventoryState },
+  InsufficientStock
+> =>
+  Effect.gen(function*() {
+    const events = yield* decide(state, command)
+    let newState = state
+    for (const event of events) {
+      newState = evolve(newState, event)
+    }
+    return { events, state: newState }
+  })
+
+/** @deprecated Use handleCommand + decide + evolve directly */
 export const InventoryAggregate = AggregateDefinition.define({
   name: "Inventory" as const,
   initialState: initialInventoryState,

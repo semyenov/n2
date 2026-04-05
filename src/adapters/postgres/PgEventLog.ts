@@ -13,22 +13,24 @@ import { EntityId, EntityType } from "@effect/cluster"
 import { SqlClient } from "@effect/sql"
 import { EventLog, type EventLogService } from "../../framework/runtime/EventLog.js"
 import { EventEnvelope } from "../../framework/contracts/EventEnvelope.js"
-import { Metadata } from "../../framework/contracts/Metadata.js"
 import { type Revision, ConcurrencyError, make as makeRevision } from "../../framework/domain/Revision.js"
 
-const decodeMetadata = Schema.decodeUnknownSync(Metadata)
-
-const rowToEnvelope = (row: Record<string, unknown>): EventEnvelope =>
-  new EventEnvelope({
+const rowToEnvelope = (row: Record<string, unknown>): EventEnvelope => {
+  const meta = (row["metadata"] ?? {}) as Record<string, unknown>
+  return new EventEnvelope({
     eventId: String(row["event_id"]),
     streamId: String(row["stream_id"]),
     aggregateId: EntityId.make(String(row["aggregate_id"])),
     aggregateType: Schema.decodeSync(EntityType.EntityType)(String(row["aggregate_type"])),
     revision: Number(row["revision"]),
     occurredAt: DateTime.unsafeMake(Number(row["occurred_at"])),
-    metadata: decodeMetadata(row["metadata"]),
+    traceId: typeof meta["traceId"] === "string" ? meta["traceId"] : undefined,
+    spanId: typeof meta["spanId"] === "string" ? meta["spanId"] : undefined,
+    actorId: typeof meta["actorId"] === "string" ? meta["actorId"] : undefined,
+    tenantId: typeof meta["tenantId"] === "string" ? meta["tenantId"] : undefined,
     payload: row["payload"]
   })
+}
 
 /**
  * @since 1.0.0
@@ -74,7 +76,7 @@ export const layer: Layer.Layer<EventLog, never, SqlClient.SqlClient> =
                 ${event.aggregateType},
                 ${event.revision},
                 ${DateTime.toDate(event.occurredAt).toISOString()},
-                ${JSON.stringify(event.metadata)}::jsonb,
+                ${JSON.stringify({ traceId: event.traceId, spanId: event.spanId, actorId: event.actorId, tenantId: event.tenantId })}::jsonb,
                 ${JSON.stringify(event.payload)}::jsonb
               )
             `.pipe(Effect.orDie)

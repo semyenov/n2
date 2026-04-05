@@ -3,11 +3,11 @@
  * @module EventEnvelope
  *
  * Schema-driven event envelope for wrapping domain events with metadata.
+ * Uses native Effect tracing (traceId/spanId) instead of custom Metadata.
  * Uses @effect/cluster EntityId and EntityType for branded aggregate identity.
  */
 import * as Schema from "effect/Schema"
 import { EntityId, EntityType } from "@effect/cluster"
-import { Metadata } from "./Metadata.js"
 
 /**
  * @since 1.0.0
@@ -19,8 +19,12 @@ export class EventEnvelope extends Schema.Class<EventEnvelope>("n2/EventEnvelope
   aggregateId: EntityId.EntityId,
   aggregateType: EntityType.EntityType,
   revision: Schema.Number,
+  version: Schema.optionalWith(Schema.Number, { default: () => 1 }),
   occurredAt: Schema.DateTimeUtc,
-  metadata: Metadata,
+  traceId: Schema.optional(Schema.String),
+  spanId: Schema.optional(Schema.String),
+  actorId: Schema.optional(Schema.String),
+  tenantId: Schema.optional(Schema.String),
   payload: Schema.Unknown
 }) {}
 
@@ -37,8 +41,12 @@ export const makeTyped = <A extends Schema.Schema.Any>(payloadSchema: A) =>
     aggregateId: EntityId.EntityId,
     aggregateType: EntityType.EntityType,
     revision: Schema.Number,
+    version: Schema.optionalWith(Schema.Number, { default: () => 1 }),
     occurredAt: Schema.DateTimeUtc,
-    metadata: Metadata,
+    traceId: Schema.optional(Schema.String),
+    spanId: Schema.optional(Schema.String),
+    actorId: Schema.optional(Schema.String),
+    tenantId: Schema.optional(Schema.String),
     payload: payloadSchema
   })
 

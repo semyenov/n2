@@ -6,6 +6,7 @@ export * as AggregateEntity from "./AggregateEntity.js"
 
 // Native @effect/cluster re-exports
 export {
+  // Entity system
   Entity,
   EntityProxy,
   EntityProxyServer,
@@ -13,16 +14,36 @@ export {
   EntityId,
   EntityType,
   EntityAddress,
-  ClusterSchema,
-  ClusterMetrics,
-  ClusterWorkflowEngine,
+
+  // Sharding & config
   Sharding,
   ShardingConfig,
-  Singleton,
+  ClusterSchema,
+  ClusterMetrics,
+
+  // Runner infrastructure
+  Runner,
+  Runners,
+  RunnerAddress,
+  RunnerHealth,
+  RunnerServer,
+  RunnerStorage,
+  SqlRunnerStorage,
+  HttpRunner,
+  SocketRunner,
   SingleRunner,
   TestRunner,
-  Snowflake,
+
+  // Message persistence
   MessageStorage,
   SqlMessageStorage,
-  DeliverAt
+  Message,
+  Envelope,
+  Reply,
+
+  // Utilities
+  Snowflake,
+  Singleton,
+  DeliverAt,
+  ClusterWorkflowEngine
 } from "@effect/cluster"

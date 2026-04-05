@@ -17,7 +17,7 @@ export class LineItem extends Schema.Class<LineItem>("LineItem")({
   sku: Schema.String,
   quantity: Schema.Number,
   price: Schema.Number
-}) {}
+}) { }
 
 // ---------------------------------------------------------------------------
 // Events
@@ -26,22 +26,22 @@ export class LineItem extends Schema.Class<LineItem>("LineItem")({
 export class OrderCreated extends Schema.TaggedClass<OrderCreated>()(
   "OrderCreated",
   { orderId: Schema.String, customerId: Schema.String, createdAt: Schema.DateTimeUtc }
-) {}
+) { }
 
 export class ItemAdded extends Schema.TaggedClass<ItemAdded>()(
   "ItemAdded",
   { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number }
-) {}
+) { }
 
 export class OrderSubmitted extends Schema.TaggedClass<OrderSubmitted>()(
   "OrderSubmitted",
   { orderId: Schema.String, submittedAt: Schema.DateTimeUtc }
-) {}
+) { }
 
 export class OrderCancelled extends Schema.TaggedClass<OrderCancelled>()(
   "OrderCancelled",
   { orderId: Schema.String, reason: Schema.String, cancelledAt: Schema.DateTimeUtc }
-) {}
+) { }
 
 export const OrderEvent = Schema.Union(OrderCreated, ItemAdded, OrderSubmitted, OrderCancelled)
 export type OrderEvent = typeof OrderEvent.Type
@@ -53,12 +53,12 @@ export type OrderEvent = typeof OrderEvent.Type
 export class OrderError extends Schema.TaggedError<OrderError>()(
   "OrderError",
   { message: Schema.String }
-) {}
+) { }
 
 export class OrderNotFound extends Schema.TaggedError<OrderNotFound>()(
   "OrderNotFound",
   { orderId: Schema.String }
-) {}
+) { }
 
 export const OrderErrors = Schema.Union(OrderError, OrderNotFound)
 export type OrderErrors = typeof OrderErrors.Type
@@ -76,7 +76,7 @@ export class OrderState extends Schema.Class<OrderState>("OrderState")({
   customerId: Schema.OptionFromSelf(Schema.String),
   items: Schema.Array(LineItem),
   totalAmount: Schema.Number
-}) {}
+}) { }
 
 export const initialOrderState = new OrderState({
   status: "empty",
@@ -93,7 +93,7 @@ export const initialOrderState = new OrderState({
 export class CommandResult extends Schema.Class<CommandResult>("CommandResult")({
   orderId: Schema.String,
   revision: Schema.Number
-}) {}
+}) { }
 
 // ---------------------------------------------------------------------------
 // Commands (Schema.TaggedRequest -- carry success/failure types)
@@ -106,22 +106,22 @@ export class CommandResult extends Schema.Class<CommandResult>("CommandResult")(
 export class CreateOrder extends Schema.TaggedRequest<CreateOrder>("CreateOrder")(
   "CreateOrder",
   { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, customerId: Schema.String } }
-) {}
+) { }
 
 export class AddItem extends Schema.TaggedRequest<AddItem>("AddItem")(
   "AddItem",
   { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number } }
-) {}
+) { }
 
 export class SubmitOrder extends Schema.TaggedRequest<SubmitOrder>("SubmitOrder")(
   "SubmitOrder",
   { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String } }
-) {}
+) { }
 
 export class CancelOrder extends Schema.TaggedRequest<CancelOrder>("CancelOrder")(
   "CancelOrder",
   { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, reason: Schema.String } }
-) {}
+) { }
 
 export type OrderCommand = CreateOrder | AddItem | SubmitOrder | CancelOrder
 
@@ -154,7 +154,10 @@ export const OrderEntity = Entity.make("Order", [
     success: CommandResult,
     error: OrderError
   })
-]).annotateRpcs(ClusterSchema.Persisted, true)
+]).annotateRpcs(
+  ClusterSchema.Persisted,
+  true
+)
 
 // ---------------------------------------------------------------------------
 // Legacy RPC group (for direct non-cluster HTTP usage)
@@ -181,4 +184,4 @@ export class OrderRpcs extends RpcGroup.make(
     success: CommandResult,
     error: OrderError
   })
-) {}
+) { }

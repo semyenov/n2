@@ -1,5 +1,7 @@
 /**
  * @since 1.0.0
+ * @deprecated Use native Effect tracing (Effect.withSpan + Effect.currentSpan).
+ * Cluster Envelope automatically propagates traceId/spanId.
  * @module RequestContext
  *
  * Request context propagation. Uses FiberRef to carry metadata through fibers.

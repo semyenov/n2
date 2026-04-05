@@ -1,5 +1,7 @@
 /**
  * @since 1.0.0
+ * @deprecated Use native Effect tracing (Effect.withSpan + cluster Envelope headers).
+ * EventEnvelope now carries traceId/spanId directly.
  * @module Metadata
  *
  * Request metadata for correlation and causation.

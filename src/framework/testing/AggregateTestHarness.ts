@@ -16,7 +16,6 @@ import type {
 import * as AggregateRuntime from "../runtime/AggregateRuntime.js"
 import { EventLog } from "../runtime/EventLog.js"
 import { EventEnvelope } from "../contracts/EventEnvelope.js"
-import { empty as emptyMetadata } from "../contracts/Metadata.js"
 import { type Revision, InitialRevision, ConcurrencyError } from "../domain/Revision.js"
 import { layerMemory as EventLogMemory } from "../runtime/EventJournalEventLog.js"
 import { layerMemory as SnapshotStoreMemory } from "../runtime/SnapshotStore.js"
@@ -118,7 +117,6 @@ export const make = <
             aggregateType: Schema.decodeSync(EntityType.EntityType)(definition.name),
             revision,
             occurredAt: now,
-            metadata: emptyMetadata,
             payload: event
           })
         })

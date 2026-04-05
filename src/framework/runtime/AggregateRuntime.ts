@@ -1,5 +1,7 @@
 /**
  * @since 1.0.0
+ * @deprecated For new code, use handleCommand (decide+evolve) directly in entity handlers.
+ * AggregateRuntime is kept for backward compat with Kafka-publishing integrations.
  * @module AggregateRuntime
  *
  * Aggregate runtime that orchestrates hydration, command handling,
@@ -30,7 +32,9 @@ import { EventLog } from "./EventLog.js"
 import { SnapshotStore, type SnapshotData } from "./SnapshotStore.js"
 import { KafkaPublisher, KafkaProducerRecord } from "./KafkaPublisher.js"
 import { IdGenerator } from "./IdGenerator.js"
-import { getRequestContext } from "./RequestContext.js"
+import * as RetryPolicy from "./RetryPolicy.js"
+import * as Metric from "effect/Metric"
+import * as Metrics from "./Metrics.js"
 
 /**
  * @since 1.0.0
@@ -153,7 +157,10 @@ export const make = <
       const snapshotStore = yield* SnapshotStore
       const publisher = yield* KafkaPublisher
       const idGen = yield* IdGenerator
-      const metadata = yield* getRequestContext
+      // Extract tracing from current span (set by Effect.withSpan or cluster Envelope)
+      const spanOpt = yield* Effect.currentSpan.pipe(Effect.option)
+      const traceId = Option.isSome(spanOpt) ? spanOpt.value.traceId : undefined
+      const spanId = Option.isSome(spanOpt) ? spanOpt.value.spanId : undefined
 
       const { state, revision: currentRevision } = yield* hydrate(aggregateId)
       const newEvents = yield* definition.decide(state, command)
@@ -180,7 +187,8 @@ export const make = <
             aggregateType,
             revision: nextRevision,
             occurredAt: now,
-            metadata,
+            traceId,
+            spanId,
             payload: event
           })
         )
@@ -196,7 +204,10 @@ export const make = <
             value: JSON.stringify(env)
           })
       )
-      yield* publisher.publishBatch(kafkaRecords)
+      yield* publisher.publishBatch(kafkaRecords).pipe(
+        Effect.retry(RetryPolicy.kafkaPublish),
+        Effect.catchAll(() => Effect.log("Kafka publish failed after retries, events are in EventLog"))
+      )
 
       let finalState = state
       for (const event of newEvents) {
@@ -208,9 +219,13 @@ export const make = <
       }
 
       return { state: finalState, revision: newRevision, events: newEvents }
-    }).pipe(Effect.withSpan("n2.aggregate.handle", {
-      attributes: { "aggregate.type": definition.name, "aggregate.id": aggregateId }
-    }))
+    }).pipe(
+      Effect.tap(() => Metric.increment(Metrics.commandsTotal)),
+      Effect.tapError(() => Metric.increment(Metrics.commandErrors)),
+      Effect.withSpan("n2.aggregate.handle", {
+        attributes: { "aggregate.type": definition.name, "aggregate.id": aggregateId }
+      })
+    )
 
   return { hydrate, handle }
 }

@@ -10,7 +10,6 @@ import { EntityId, EntityType } from "@effect/cluster"
 import * as ProjectorTestHarness from "../../framework/testing/ProjectorTestHarness.js"
 import { OrdersViewProjector, type OrdersViewState, type OrderView } from "./projector.js"
 import { EventEnvelope } from "../../framework/contracts/EventEnvelope.js"
-import { empty as emptyMetadata } from "../../framework/contracts/Metadata.js"
 
 const harness = ProjectorTestHarness.make(OrdersViewProjector)
 const now = DateTime.unsafeMake(0)
@@ -26,7 +25,6 @@ const makeEnvelope = (
     aggregateType: Schema.decodeSync(EntityType.EntityType)("Order"),
     revision,
     occurredAt: now,
-    metadata: emptyMetadata,
     payload
   })
 

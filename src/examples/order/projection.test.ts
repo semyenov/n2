@@ -20,7 +20,6 @@ import * as InMemoryKafkaConsumer from "../../framework/testing/InMemoryKafkaCon
 import * as InMemoryDeadLetter from "../../framework/testing/InMemoryDeadLetter.js"
 import { layerMemory as CheckpointStoreMemory } from "../../framework/projection/CheckpointStore.js"
 import { EventEnvelope } from "../../framework/contracts/EventEnvelope.js"
-import { empty as emptyMetadata } from "../../framework/contracts/Metadata.js"
 import { OrdersViewProjector, type OrdersViewState } from "./projector.js"
 
 const testLayer = Layer.mergeAll(
@@ -41,7 +40,6 @@ const makeEventMessage = (
     aggregateType: Schema.decodeSync(EntityType.EntityType)("Order"),
     revision,
     occurredAt: DateTime.unsafeMake(0),
-    metadata: emptyMetadata,
     payload
   })
   return new KafkaMessage({
