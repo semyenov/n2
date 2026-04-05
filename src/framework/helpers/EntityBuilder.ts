@@ -1,59 +1,67 @@
 /**
  * @since 1.0.0
  *
- * Derives an Entity definition from command constructors,
+ * Derives an Rpc definition from a Schema.TaggedRequest command class,
  * eliminating the need to repeat payload/success/error schemas.
  */
+import type * as Schema from "effect/Schema"
 import { Rpc } from "@effect/rpc"
-import { Entity, ClusterSchema } from "@effect/cluster"
 
-type Tagged = { readonly _tag: string }
-
-type CommandConstructors<Command extends Tagged> = {
-  readonly [K in Extract<Command["_tag"], string>]:
-    new (...args: ReadonlyArray<never>) => Extract<Command, { readonly _tag: K }>
+type RpcWithPrimaryKeyOptions<
+  Payload extends Schema.Struct.Fields,
+  Success extends Schema.Schema.Any,
+  Failure extends Schema.Schema.All
+> = {
+  readonly payload: Payload
+  readonly primaryKey: [Payload] extends [Schema.Struct.Fields] ?
+    (payload: Schema.Simplify<Schema.Struct.Type<Payload>>) => string :
+    never
+  readonly success: Success
+  readonly error: Failure
 }
 
 /**
- * Derives an Entity from command constructors.
+ * Derives an Rpc from a `Schema.TaggedRequest` command class.
  *
- * Each command must be a `Schema.TaggedRequest` which exposes
- * `.fields`, `.success`, and `.failure` as static properties.
+ * Extracts `_tag`, payload fields, `success`, and `failure` from the
+ * command class's static properties, so you don't repeat them.
+ *
+ * Use inside a literal array passed to `Entity.make` to preserve tuple types.
  *
  * @example
  * ```ts
- * const OrderEntity = makeEntity("Order", OrderCommands, {
- *   primaryKey: (p) => p.orderId,
- *   persisted: true
- * })
+ * import { Entity, ClusterSchema } from "@effect/cluster"
+ * import * as N2 from "n2/framework/helpers"
+ *
+ * const OrderEntity = Entity.make("Order", [
+ *   N2.rpcFromCommand(CreateOrder, (p) => p.orderId),
+ *   N2.rpcFromCommand(AddItem, (p) => p.orderId),
+ * ]).annotateRpcs(ClusterSchema.Persisted, true)
  * ```
  *
  * @since 1.0.0
  */
-export const makeEntity = <
-  Type extends string,
-  Command extends Tagged
+export const rpcFromCommand = <
+  Tag extends string,
+  Fields extends { readonly _tag: Schema.Struct.Field } & Schema.Struct.Fields,
+  Success extends Schema.Schema.Any,
+  Failure extends Schema.Schema.All
 >(
-  type: Type,
-  commands: CommandConstructors<Command>,
-  options: {
-    readonly primaryKey: (payload: any) => string
-    readonly persisted?: boolean
-  }
+  Cmd: {
+    readonly _tag: Tag
+    readonly fields: Fields
+    readonly success: Success
+    readonly failure: Failure
+  },
+  primaryKey: (payload: Schema.Simplify<Schema.Struct.Type<Omit<Fields, "_tag">>>) => string
 ) => {
-  const rpcs = Object.keys(commands).map((tag) => {
-    const Ctor = commands[tag as keyof typeof commands] as any
-    const { _tag, ...payloadFields } = Ctor.fields
-    return Rpc.make(tag, {
-      payload: payloadFields,
-      primaryKey: options.primaryKey,
-      success: Ctor.success,
-      error: Ctor.failure,
-    })
-  })
+  const { _tag: _ignored, ...payload } = Cmd.fields
+  const options = {
+    payload,
+    primaryKey,
+    success: Cmd.success,
+    error: Cmd.failure,
+  } as unknown as RpcWithPrimaryKeyOptions<Omit<Fields, "_tag">, Success, Failure>
 
-  const entity = Entity.make(type, rpcs as any)
-  return options.persisted
-    ? entity.annotateRpcs(ClusterSchema.Persisted, true)
-    : entity
+  return Rpc.make<Tag, Omit<Fields, "_tag">, Success, Failure>(Cmd._tag, options)
 }

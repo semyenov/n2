@@ -3,6 +3,7 @@
  * Commands are Schema.TaggedRequest.
  */
 import * as Schema from "effect/Schema"
+import { Entity, ClusterSchema } from "@effect/cluster"
 import * as N2 from "../../framework/helpers/index.js"
 
 // ---------------------------------------------------------------------------
@@ -83,10 +84,12 @@ export const InventoryCommands = {
 } as const
 
 // ---------------------------------------------------------------------------
-// Entity (derived from command constructors)
+// Entity (derived from command classes)
 // ---------------------------------------------------------------------------
 
-export const InventoryEntity = N2.makeEntity("Inventory", InventoryCommands, {
-  primaryKey: (p) => p.sku,
-  persisted: true
-})
+const pk = (p: { sku: string }) => p.sku
+
+export const InventoryEntity = Entity.make("Inventory", [
+  N2.rpcFromCommand(ReserveStock, pk),
+  N2.rpcFromCommand(ReleaseStock, pk),
+]).annotateRpcs(ClusterSchema.Persisted, true)

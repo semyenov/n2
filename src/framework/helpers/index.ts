@@ -29,4 +29,4 @@ export {
   type ExecutionMode
 } from "./Definition.js"
 
-export { makeEntity } from "./EntityBuilder.js"
+export { rpcFromCommand } from "./EntityBuilder.js"

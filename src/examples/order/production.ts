@@ -57,4 +57,4 @@ const main = Effect.gen(function* () {
   )
 )
 
-Effect.runPromise(main as Effect.Effect<void, never, never>)
+Effect.runPromise(main)

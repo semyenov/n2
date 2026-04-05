@@ -6,6 +6,7 @@
  */
 import * as Schema from "effect/Schema"
 import * as Option from "effect/Option"
+import { Entity, ClusterSchema } from "@effect/cluster"
 import * as N2 from "../../framework/helpers/index.js"
 
 // ---------------------------------------------------------------------------
@@ -133,13 +134,17 @@ export const OrderCommands = {
 } as const
 
 // ---------------------------------------------------------------------------
-// Entity definition (derived from command constructors)
+// Entity definition (derived from command classes)
 // ---------------------------------------------------------------------------
 
-export const OrderEntity = N2.makeEntity("Order", OrderCommands, {
-  primaryKey: (p) => p.orderId,
-  persisted: true
-})
+const pk = (p: { orderId: string }) => p.orderId
+
+export const OrderEntity = Entity.make("Order", [
+  N2.rpcFromCommand(CreateOrder, pk),
+  N2.rpcFromCommand(AddItem, pk),
+  N2.rpcFromCommand(SubmitOrder, pk),
+  N2.rpcFromCommand(CancelOrder, pk),
+]).annotateRpcs(ClusterSchema.Persisted, true)
 
 // ---------------------------------------------------------------------------
 // RPC group -- derived from Entity protocol (no duplication)
