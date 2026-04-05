@@ -6,8 +6,7 @@ import { test, expect } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Option from "effect/Option"
 import * as DateTime from "effect/DateTime"
-import * as N2 from "../../framework/helpers/index.js"
-import { handleCommand, evolve } from "./aggregate.js"
+import { Order, handleCommand, evolve } from "./aggregate.js"
 import {
   CreateOrder,
   AddItem,
@@ -35,10 +34,10 @@ test("CreateOrder produces OrderCreated event", async () => {
 
 test("AddItem to draft order produces ItemAdded", async () => {
   const result = await run(
-    N2.Aggregate.runCommands(handleCommand, emptyState, [
+    Order.run([
       new CreateOrder({ orderId: "o2", customerId: "c1" }),
       new AddItem({ orderId: "o2", sku: "SKU-001", quantity: 2, price: 19.99 })
-    ])
+    ], emptyState)
   )
   expect(result.events.length).toBe(1)
   expect((result.events[0] as ItemAdded)._tag).toBe("ItemAdded")
@@ -47,11 +46,11 @@ test("AddItem to draft order produces ItemAdded", async () => {
 
 test("SubmitOrder with items produces OrderSubmitted", async () => {
   const result = await run(
-    N2.Aggregate.runCommands(handleCommand, emptyState, [
+    Order.run([
       new CreateOrder({ orderId: "o3", customerId: "c1" }),
       new AddItem({ orderId: "o3", sku: "X", quantity: 1, price: 10 }),
       new SubmitOrder({ orderId: "o3" })
-    ])
+    ], emptyState)
   )
   expect((result.events[0] as OrderSubmitted)._tag).toBe("OrderSubmitted")
   expect(result.state.status).toBe("submitted")

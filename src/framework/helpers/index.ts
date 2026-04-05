@@ -2,17 +2,29 @@
  * @since 1.0.0
  * @module N2
  *
- * Namespaced helper functions to reduce aggregate boilerplate.
+ * Definition-centric helper functions for domain models.
  *
  * @example
  * ```ts
  * import * as N2 from "n2/framework/helpers/index.js"
  *
- * const handleCommand = N2.Aggregate.makeHandleCommand(decide, evolve)
- * const dispatch = N2.Entity.makeDispatch({ handleCommand, initialState, ... })
- * const route = N2.Http.makeRoute(rpcs, "/rpc/orders", handlers)
+ * const Order = N2.define({
+ *   initialState,
+ *   commands,
+ *   evolve,
+ *   decide
+ * })
+ *
+ * const OrderHandlers = Order.toRpcHandlers(OrderRpcs, { toResult, toError })
+ * const OrderEntityLayer = Order.toEntityLayer(OrderEntity, { toResult, toError })
+ * const OrderRoute = Order.toHttpRoute(OrderRpcs, "/rpc/orders", { handlers: OrderHandlers })
  * ```
  */
-export * as Aggregate from "./Aggregate.js"
-export * as Entity from "./Entity.js"
-export * as Http from "./Http.js"
+export {
+  define,
+  type AdapterOptions,
+  type Definition,
+  type ExecutionContext,
+  type ExecutionErrorContext,
+  type ExecutionMode
+} from "./Definition.js"

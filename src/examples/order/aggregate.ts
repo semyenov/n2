@@ -1,111 +1,125 @@
 /**
  * Order aggregate.
  */
-import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
-import * as DateTime from "effect/DateTime";
-import * as N2 from "../../framework/helpers/index.js";
-import * as C from "./contracts.js";
+import * as DateTime from "effect/DateTime"
+import * as Effect from "effect/Effect"
+import * as Option from "effect/Option"
+import * as N2 from "../../framework/helpers/index.js"
+import * as C from "./contracts.js"
 
-const Order = N2.Aggregate.define<C.OrderEvent, C.OrderCommand>()(
-  C.initialOrderState,
-  {
-    evolve: {
-      OrderCreated: (state, e) => ({
-        ...state,
-        status: "draft" as const,
-        orderId: Option.some(e.orderId),
-        customerId: Option.some(e.customerId),
-      }),
-      ItemAdded: (state, e) => ({
-        ...state,
-        items: [
-          ...state.items,
-          new C.LineItem({
-            sku: e.sku,
-            quantity: e.quantity,
-            price: e.price,
-          }),
-        ],
-        totalAmount: state.totalAmount + e.price * e.quantity,
-      }),
-      OrderSubmitted: (state) => ({
-        ...state,
-        status: "submitted" as const,
-      }),
-      OrderCancelled: (state) => ({
-        ...state,
-        status: "cancelled" as const,
-      }),
-    },
-    decide: {
-      CreateOrder: (state, cmd) =>
-        Effect.gen(function* () {
-          if (state.status !== "empty")
-            return yield* new C.OrderError({ message: "Order already exists" });
-          const now = yield* DateTime.now;
-          return [
-            new C.OrderCreated({
-              orderId: cmd.orderId,
-              customerId: cmd.customerId,
-              createdAt: now,
-            }),
-          ];
-        }),
-      AddItem: (state, cmd) =>
-        Effect.gen(function* () {
-          if (state.status !== "draft")
-            return yield* new C.OrderError({
-              message: `Cannot add items in status "${state.status}"`,
-            });
-          return [
-            new C.ItemAdded({
-              orderId: cmd.orderId,
-              sku: cmd.sku,
-              quantity: cmd.quantity,
-              price: cmd.price,
-            }),
-          ];
-        }),
-      SubmitOrder: (state, cmd) =>
-        Effect.gen(function* () {
-          if (state.status !== "draft")
-            return yield* new C.OrderError({
-              message: `Cannot submit in status "${state.status}"`,
-            });
-          if (state.items.length === 0)
-            return yield* new C.OrderError({
-              message: "Cannot submit order with no items",
-            });
-          const now = yield* DateTime.now;
-          return [
-            new C.OrderSubmitted({ orderId: cmd.orderId, submittedAt: now }),
-          ];
-        }),
-      CancelOrder: (state, cmd) =>
-        Effect.gen(function* () {
-          if (state.status === "cancelled")
-            return yield* new C.OrderError({
-              message: "Order is already cancelled",
-            });
-          if (state.status === "empty")
-            return yield* new C.OrderError({ message: "Order does not exist" });
-          const now = yield* DateTime.now;
-          return [
-            new C.OrderCancelled({
-              orderId: cmd.orderId,
-              reason: cmd.reason,
-              cancelledAt: now,
-            }),
-          ];
-        }),
-    },
+export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
+  initialState: C.initialOrderState,
+  commands: C.OrderCommands,
+  evolve: {
+    OrderCreated: (state, event) => ({
+      ...state,
+      status: "draft" as const,
+      orderId: Option.some(event.orderId),
+      customerId: Option.some(event.customerId)
+    }),
+    ItemAdded: (state, event) => ({
+      ...state,
+      items: [
+        ...state.items,
+        new C.LineItem({
+          sku: event.sku,
+          quantity: event.quantity,
+          price: event.price
+        })
+      ],
+      totalAmount: state.totalAmount + event.price * event.quantity
+    }),
+    OrderSubmitted: (state) => ({
+      ...state,
+      submittedAt: Option.some(DateTime.now),
+      status: "submitted" as const
+    }),
+    OrderCancelled: (state) => ({
+      ...state,
+      status: "cancelled" as const,
+      cancelledAt: Option.some(DateTime.now)
+    })
   },
-);
+  decide: {
+    CreateOrder: (state, command) =>
+      Effect.gen(function* () {
+        if (state.status !== "empty") {
+          return yield* new C.OrderError({ message: "Order already exists" })
+        }
+
+        const now = yield* DateTime.now
+        return [
+          new C.OrderCreated({
+            orderId: command.orderId,
+            customerId: command.customerId,
+            createdAt: now
+          })
+        ]
+      }),
+    AddItem: (state, command) =>
+      Effect.gen(function* () {
+        if (state.status !== "draft") {
+          return yield* new C.OrderError({
+            message: `Cannot add items in status "${state.status}"`
+          })
+        }
+
+        return [
+          new C.ItemAdded({
+            orderId: command.orderId,
+            sku: command.sku,
+            quantity: command.quantity,
+            price: command.price
+          })
+        ]
+      }),
+    SubmitOrder: (state, command) =>
+      Effect.gen(function* () {
+        if (state.status !== "draft") {
+          return yield* new C.OrderError({
+            message: `Cannot submit in status "${state.status}"`
+          })
+        }
+
+        if (state.items.length === 0) {
+          return yield* new C.OrderError({
+            message: "Cannot submit order with no items"
+          })
+        }
+
+        const now = yield* DateTime.now
+        return [
+          new C.OrderSubmitted({ orderId: command.orderId, submittedAt: now })
+        ]
+      }),
+    CancelOrder: (state, command) =>
+      Effect.gen(function* () {
+        if (state.status === "cancelled") {
+          return yield* new C.OrderError({
+            message: "Order is already cancelled"
+          })
+        }
+
+        if (state.status === "empty") {
+          return yield* new C.OrderError({ message: "Order does not exist" })
+        }
+
+        const now = yield* DateTime.now
+        return [
+          new C.OrderCancelled({
+            orderId: command.orderId,
+            reason: command.reason,
+            cancelledAt: now
+          })
+        ]
+      })
+  }
+})
 
 export const {
   evolve,
   decide,
-  handleCommand,
+  handle: handleCommand,
+  run,
   initialState: initialOrderState,
 } = Order;

@@ -1,30 +1,30 @@
 /**
- * Inventory cluster entity. Uses N2 helpers.
+ * Inventory cluster entity. Uses the Inventory definition directly.
  */
-import * as N2 from "../../framework/helpers/index.js"
-import { handleCommand } from "./aggregate.js"
+import { Inventory } from "./aggregate.js"
 import {
   InventoryEntity,
   StockResult,
-  InsufficientStock,
-  ReserveStock,
-  ReleaseStock,
-  initialInventoryState
+  InsufficientStock
 } from "./contracts.js"
 
-export const InventoryEntityLayer = N2.Entity.makeEntityLayer(InventoryEntity, {
-  handleCommand,
-  initialState: initialInventoryState,
-  toResult: (_entityId, _revision, state) => new StockResult({
-    sku: state.sku,
-    available: state.available,
-    reserved: state.reserved
-  }),
-  toError: (err) =>
-    err instanceof InsufficientStock
-      ? err
-      : new InsufficientStock({ sku: "", requested: 0, available: 0 }),
-  commands: { ReserveStock, ReleaseStock }
-}, { maxIdleTime: "30 minutes" })
+export const InventoryEntityLayer = Inventory.toEntityLayer(
+  InventoryEntity,
+  {
+    toResult: ({ state }) => new StockResult({
+      sku: state.sku,
+      available: state.available,
+      reserved: state.reserved
+    }),
+    toError: (error) =>
+      error instanceof InsufficientStock
+        ? error
+        : new InsufficientStock({ sku: "", requested: 0, available: 0 })
+  },
+  {
+    maxIdleTime: "30 minutes",
+    concurrency: "unbounded"
+  }
+)
 
 export { InventoryEntity }

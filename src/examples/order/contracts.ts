@@ -123,7 +123,15 @@ export class CancelOrder extends Schema.TaggedRequest<CancelOrder>("CancelOrder"
   { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, reason: Schema.String } }
 ) { }
 
-export type OrderCommand = CreateOrder | AddItem | SubmitOrder | CancelOrder
+export const OrderCommand = Schema.Union(CreateOrder, AddItem, SubmitOrder, CancelOrder)
+export type OrderCommand = typeof OrderCommand.Type
+
+export const OrderCommands = {
+  CreateOrder,
+  AddItem,
+  SubmitOrder,
+  CancelOrder
+} as const
 
 // ---------------------------------------------------------------------------
 // Entity definition (with primaryKey for cluster routing)

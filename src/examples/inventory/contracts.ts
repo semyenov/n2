@@ -75,7 +75,13 @@ export class ReleaseStock extends Schema.TaggedRequest<ReleaseStock>("ReleaseSto
   { failure: InsufficientStock, success: StockResult, payload: { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String } }
 ) {}
 
-export type InventoryCommand = ReserveStock | ReleaseStock
+export const InventoryCommand = Schema.Union(ReserveStock, ReleaseStock)
+export type InventoryCommand = typeof InventoryCommand.Type
+
+export const InventoryCommands = {
+  ReserveStock,
+  ReleaseStock
+} as const
 
 // ---------------------------------------------------------------------------
 // Entity
