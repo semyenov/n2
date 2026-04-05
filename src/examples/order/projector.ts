@@ -1,21 +1,17 @@
 /**
- * Orders view projection: builds a read-side view from order events.
+ * Typed native projector using @effect/experimental EventLog.group.
+ *
+ * Each event handler receives fully typed payload -- no runtime type checking.
+ * Compare with projector.ts which uses raw `envelope.payload` casting.
  */
 import * as Effect from "effect/Effect"
-import * as Schema from "effect/Schema"
 import * as HashMap from "effect/HashMap"
-import * as ProjectorDefinition from "../../framework/projection/ProjectorDefinition.js"
-import type { EventEnvelope } from "../../framework/contracts/EventEnvelope.js"
-import {
-  type OrderEvent,
-  OrderCreated,
-  ItemAdded,
-  OrderSubmitted,
-  OrderCancelled
-} from "./contracts.js"
+import * as Schema from "effect/Schema"
+import { EventLog } from "@effect/experimental"
+import { OrderEventGroup } from "./events.js"
 
 // ---------------------------------------------------------------------------
-// Read model
+// Read model (same as projector.ts)
 // ---------------------------------------------------------------------------
 
 export class OrderView extends Schema.Class<OrderView>("OrderView")({
@@ -24,87 +20,37 @@ export class OrderView extends Schema.Class<OrderView>("OrderView")({
   status: Schema.String,
   itemCount: Schema.Number,
   totalAmount: Schema.Number
-}) {}
+}) { }
 
 // ---------------------------------------------------------------------------
-// Projector
+// Typed event handlers via EventLog.group
+//
+// Each handler receives `{ payload, entry, conflicts }` with full type
+// inference on `payload` -- no casts, no type guards, no runtime checks.
 // ---------------------------------------------------------------------------
 
-export type OrdersViewState = HashMap.HashMap<string, OrderView>
-
-/**
- * Type guard for order events. The payload stored in EventEnvelope
- * is the Type form (not encoded), so we check _tag presence.
- */
-const isOrderEvent = (u: unknown): u is OrderEvent =>
-  typeof u === "object" && u !== null && "_tag" in u &&
-  typeof (u as Record<string, unknown>)["_tag"] === "string" &&
-  ["OrderCreated", "ItemAdded", "OrderSubmitted", "OrderCancelled"].includes(
-    (u as Record<string, unknown>)["_tag"] as string
-  )
-
-export const OrdersViewProjector = ProjectorDefinition.define<OrdersViewState>({
-  name: "orders_view",
-  initialState: HashMap.empty(),
-
-  handle: (
-    state: OrdersViewState,
-    envelope: EventEnvelope
-  ): Effect.Effect<OrdersViewState> =>
-    Effect.sync(() => {
-      if (!isOrderEvent(envelope.payload)) return state
-      const event = envelope.payload
-
-      switch (event._tag) {
-        case "OrderCreated": {
-          const view = new OrderView({
-            orderId: event.orderId,
-            customerId: event.customerId,
-            status: "draft",
-            itemCount: 0,
-            totalAmount: 0
-          })
-          return HashMap.set(state, event.orderId, view)
-        }
-        case "ItemAdded": {
-          const existing = HashMap.get(state, event.orderId)
-          if (existing._tag === "None") return state
-          const current = existing.value
-          return HashMap.set(
-            state,
-            event.orderId,
-            new OrderView({
-              ...current,
-              itemCount: current.itemCount + 1,
-              totalAmount:
-                current.totalAmount + event.price * event.quantity
-            })
-          )
-        }
-        case "OrderSubmitted": {
-          const existing = HashMap.get(state, event.orderId)
-          if (existing._tag === "None") return state
-          return HashMap.set(
-            state,
-            event.orderId,
-            new OrderView({
-              ...existing.value,
-              status: "submitted"
-            })
-          )
-        }
-        case "OrderCancelled": {
-          const existing = HashMap.get(state, event.orderId)
-          if (existing._tag === "None") return state
-          return HashMap.set(
-            state,
-            event.orderId,
-            new OrderView({
-              ...existing.value,
-              status: "cancelled"
-            })
-          )
-        }
-      }
-    })
-})
+export const OrderProjectionHandlers = EventLog.group(
+  OrderEventGroup,
+  (handlers) =>
+    handlers
+      .handle("OrderCreated", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* Effect.log(`Order created: ${payload.orderId} for ${payload.customerId}`)
+        })
+      )
+      .handle("ItemAdded", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* Effect.log(`Item added to ${payload.orderId}: ${payload.sku} x${payload.quantity}`)
+        })
+      )
+      .handle("OrderSubmitted", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* Effect.log(`Order submitted: ${payload.orderId}`)
+        })
+      )
+      .handle("OrderCancelled", ({ payload }) =>
+        Effect.gen(function* () {
+          yield* Effect.log(`Order cancelled: ${payload.orderId} -- ${payload.reason}`)
+        })
+      )
+)

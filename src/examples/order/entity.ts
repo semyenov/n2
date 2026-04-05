@@ -1,16 +1,16 @@
 /**
- * Order cluster entity with EntityProxy for automatic RPC bridging.
- *
- * Two modes:
- * 1. Cluster mode: Entity.toLayer + EntityProxyServer (automatic routing)
- * 2. Direct mode: OrderRpcs + manual handlers (non-cluster, HTTP-only)
+ * Order cluster entity.
+ * Stateful -- maintains state via Ref between commands.
+ * Uses handleCommand (decide+evolve) directly.
  */
 import * as Effect from "effect/Effect"
+import * as Ref from "effect/Ref"
 import * as Duration from "effect/Duration"
-import { Entity, EntityId, EntityProxy, EntityProxyServer } from "@effect/cluster"
-import * as AggregateEntity from "../../framework/cluster/AggregateEntity.js"
-import { OrderAggregate } from "./aggregate.js"
+import { Entity, EntityProxy, EntityProxyServer } from "@effect/cluster"
+import { handleCommand } from "./aggregate.js"
 import {
+  type OrderState,
+  type OrderCommand,
   OrderEntity,
   OrderRpcs,
   CommandResult,
@@ -18,134 +18,73 @@ import {
   CreateOrder,
   AddItem,
   SubmitOrder,
-  CancelOrder
+  CancelOrder,
+  initialOrderState
 } from "./contracts.js"
 
 // ---------------------------------------------------------------------------
-// Aggregate runtime (shared by both modes)
+// Cluster Entity: stateful per entity ID
 // ---------------------------------------------------------------------------
 
-const { runtime: orderRuntime } = AggregateEntity.make(
-  OrderAggregate,
-  OrderEntity.protocol,
-  { maxIdleTime: Duration.minutes(10), snapshotEvery: 50 }
-)
-
-// ---------------------------------------------------------------------------
-// Mode 1: Cluster Entity with EntityProxy (recommended for production)
-//
-// Entity.toLayer registers the entity with the cluster.
-// EntityProxy.toRpcGroup derives an RpcGroup from the entity.
-// EntityProxyServer.layerRpcHandlers wires the proxy handlers.
-// ---------------------------------------------------------------------------
-
-/** Entity behavior: each RPC handler delegates to the aggregate runtime. */
 export const OrderEntityLayer = OrderEntity.toLayer(
-  Effect.gen(function* () {
+  Effect.gen(function*() {
     const address = yield* Entity.CurrentAddress
+    const stateRef = yield* Ref.make<OrderState>(initialOrderState)
+    let revision = 0
+
+    const dispatch = (command: OrderCommand) =>
+      Effect.gen(function*() {
+        const state = yield* Ref.get(stateRef)
+        const result = yield* handleCommand(state, command)
+        yield* Ref.set(stateRef, result.state)
+        revision += result.events.length
+        return new CommandResult({ orderId: address.entityId, revision })
+      }).pipe(
+        Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
+      )
+
     return OrderEntity.of({
-      CreateOrder: (req) =>
-        orderRuntime.handle(
-          address.entityId,
-          new CreateOrder({ orderId: req.payload.orderId, customerId: req.payload.customerId })
-        ).pipe(
-          Effect.map((r) => new CommandResult({ orderId: address.entityId, revision: r.revision })),
-          Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
-        ),
-
-      AddItem: (req) =>
-        orderRuntime.handle(
-          address.entityId,
-          new AddItem({
-            orderId: req.payload.orderId,
-            sku: req.payload.sku,
-            quantity: req.payload.quantity,
-            price: req.payload.price
-          })
-        ).pipe(
-          Effect.map((r) => new CommandResult({ orderId: address.entityId, revision: r.revision })),
-          Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
-        ),
-
-      SubmitOrder: (req) =>
-        orderRuntime.handle(
-          address.entityId,
-          new SubmitOrder({ orderId: req.payload.orderId })
-        ).pipe(
-          Effect.map((r) => new CommandResult({ orderId: address.entityId, revision: r.revision })),
-          Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
-        ),
-
-      CancelOrder: (req) =>
-        orderRuntime.handle(
-          address.entityId,
-          new CancelOrder({ orderId: req.payload.orderId, reason: req.payload.reason })
-        ).pipe(
-          Effect.map((r) => new CommandResult({ orderId: address.entityId, revision: r.revision })),
-          Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
-        )
+      CreateOrder: (req) => dispatch(new CreateOrder(req.payload)),
+      AddItem: (req) => dispatch(new AddItem(req.payload)),
+      SubmitOrder: (req) => dispatch(new SubmitOrder(req.payload)),
+      CancelOrder: (req) => dispatch(new CancelOrder(req.payload))
     })
   }),
   { maxIdleTime: Duration.minutes(10) }
 )
 
-/**
- * RPC group derived from the Entity via EntityProxy.
- * Automatically adds entityId to each RPC payload and wraps errors.
- */
-export const OrderProxyRpcs = EntityProxy.toRpcGroup(OrderEntity)
+// ---------------------------------------------------------------------------
+// EntityProxy
+// ---------------------------------------------------------------------------
 
-/**
- * RPC handler layer via EntityProxyServer.
- * Automatically routes RPC calls to the correct entity instance via Sharding.
- */
+export const OrderProxyRpcs = EntityProxy.toRpcGroup(OrderEntity)
 export const OrderProxyHandlers = EntityProxyServer.layerRpcHandlers(OrderEntity)
 
 // ---------------------------------------------------------------------------
-// Mode 2: Direct handlers (non-cluster, for HTTP-only or testing)
+// Direct RPC handlers (non-cluster, stateless per request)
 // ---------------------------------------------------------------------------
 
-/** Direct handlers for OrderRpcs (no cluster dependency). */
 export const OrderHandlers = OrderRpcs.toLayer(
   OrderRpcs.of({
     CreateOrder: (payload) =>
-      Effect.gen(function* () {
-        const result = yield* orderRuntime.handle(
-          EntityId.make(payload.orderId),
-          new CreateOrder({ customerId: payload.customerId, orderId: payload.orderId })
-        )
-        return new CommandResult({ orderId: payload.orderId, revision: result.revision })
-      }).pipe(
+      handleCommand(initialOrderState, new CreateOrder(payload)).pipe(
+        Effect.map(({ events }) => new CommandResult({ orderId: payload.orderId, revision: events.length })),
         Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
       ),
-
     AddItem: (payload) =>
-      orderRuntime.handle(
-        EntityId.make(payload.orderId),
-        new AddItem({ orderId: payload.orderId, sku: payload.sku, quantity: payload.quantity, price: payload.price })
-      ).pipe(
-        Effect.map((r) => new CommandResult({ orderId: payload.orderId, revision: r.revision })),
+      handleCommand(initialOrderState, new AddItem(payload)).pipe(
+        Effect.map(({ events }) => new CommandResult({ orderId: payload.orderId, revision: events.length })),
         Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
       ),
-
     SubmitOrder: (payload) =>
-      orderRuntime.handle(
-        EntityId.make(payload.orderId),
-        new SubmitOrder({ orderId: payload.orderId })
-      ).pipe(
-        Effect.map((r) => new CommandResult({ orderId: payload.orderId, revision: r.revision })),
+      handleCommand(initialOrderState, new SubmitOrder(payload)).pipe(
+        Effect.map(({ events }) => new CommandResult({ orderId: payload.orderId, revision: events.length })),
         Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
       ),
-
     CancelOrder: (payload) =>
-      orderRuntime.handle(
-        EntityId.make(payload.orderId),
-        new CancelOrder({ orderId: payload.orderId, reason: payload.reason })
-      ).pipe(
-        Effect.map((r) => new CommandResult({ orderId: payload.orderId, revision: r.revision })),
+      handleCommand(initialOrderState, new CancelOrder(payload)).pipe(
+        Effect.map(({ events }) => new CommandResult({ orderId: payload.orderId, revision: events.length })),
         Effect.catchAll((err) => Effect.fail(new OrderError({ message: String(err) })))
       )
   })
 )
-
-export { orderRuntime, OrderEntity }

@@ -1,177 +1,231 @@
-# N2 -- Typesafe Microservices on Effect-TS
+# N2 -- DDD patterns for Effect-TS
 
-A minimal framework for DDD + CQRS + Event Sourcing microservices, built on the native Effect ecosystem.
+A thin convention layer for building event-sourced microservices. N2 provides the DDD patterns (aggregates, events, projections). Effect provides everything else.
 
-## Stack
+## What N2 adds
 
-- `effect` -- core runtime, Schema, Context, Layer
-- `@effect/cluster` -- Entity, Sharding, EntityProxy, Snowflake, MessageStorage, TestRunner
-- `@effect/rpc` -- RpcGroup, RpcServer, RpcMiddleware
-- `@effect/workflow` -- Workflow, Activity, DurableClock
-- `@effect/experimental` -- EventJournal, Machine, Persistence, EventGroup, Reactivity
-- `@effect/platform-bun` -- HTTP server
-- `@effect/sql-pg` -- Postgres adapters
+```
+AggregateDefinition  →  decide(state, command) → events
+                         evolve(state, event) → state
+                         handleCommand(state, command) → { events, state }
+```
+
+That's it. One abstraction. The rest is Effect, used directly.
 
 ## Quick start
 
 ```bash
 bun install
-bun test          # 17 tests across 5 files
-bun src/examples/order/index.ts  # HTTP server on :3000
-```
-
-## Architecture
-
-```
-src/
-  framework/          # Reusable framework (thin layer over Effect)
-    domain/           # AggregateDefinition (decide/evolve), Revision, BrandedId
-    runtime/          # AggregateRuntime, EventLog, SnapshotStore, Kafka, OutboxPublisher
-    cluster/          # AggregateEntity + native cluster re-exports
-    projection/       # Subscription, CheckpointStore, DeadLetter, Replay
-    transport/        # MessageAdapter, RpcMiddleware (auth/logging)
-    workflow/         # Activities, Compensation
-    testing/          # InMemory doubles, AggregateTestHarness, ProjectorTestHarness
-    contracts/        # EventEnvelope, Metadata, TopicKey, DLQEnvelope
-  adapters/           # Concrete implementations
-    kafka/            # KafkaJs publisher + consumer
-    postgres/         # SQL EventLog, SnapshotStore, CheckpointStore + migrations
-    http/             # BunHttpServer
-  examples/
-    order/            # Full Order aggregate example
-    inventory/        # Inventory aggregate (multi-aggregate)
+bun test          # 21 tests
 ```
 
 ## Define an aggregate
 
 ```ts
-import * as AggregateDefinition from "./framework/domain/AggregateDefinition.js"
+// contracts.ts -- Schema.TaggedRequest commands carry success/failure types
+export class CreateOrder extends Schema.TaggedRequest<CreateOrder>("CreateOrder")(
+  "CreateOrder",
+  { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, customerId: Schema.String } }
+) {}
 
-export const OrderAggregate = AggregateDefinition.define({
-  name: "Order",
-  initialState: { status: "empty", items: [] },
+// aggregate.ts -- pure business logic
+export const decide = (state, command) => {
+  switch (command._tag) {
+    case "CreateOrder":
+      if (state.status !== "empty") return yield* new OrderError(...)
+      return [new OrderCreated({ orderId: cmd.orderId, ... })]
+  }
+}
 
-  decide: (state, command) =>
-    Effect.gen(function*() {
-      // Business rules here. Return events.
-      return [new OrderCreated({ ... })]
-    }),
+export const evolve = (state, event) => {
+  switch (event._tag) {
+    case "OrderCreated": return { ...state, status: "draft", ... }
+  }
+}
 
-  evolve: (state, event) => {
-    // Pure state transition. No effects.
-    switch (event._tag) {
-      case "OrderCreated": return { ...state, status: "draft" }
-    }
-  },
-
-  schemas: { state: OrderState, command: OrderCommand, event: OrderEvent, error: OrderError }
-})
-```
-
-## Expose via HTTP (two modes)
-
-### Direct mode (no cluster)
-
-```ts
-const OrderRpcs = RpcGroup.make(
-  Rpc.make("CreateOrder", { payload: { ... }, success: CommandResult, error: OrderError })
-)
-
-const handlers = OrderRpcs.toLayer(OrderRpcs.of({
-  CreateOrder: (payload) => orderRuntime.handle(EntityId.make(payload.orderId), ...)
-}))
-
-RpcServer.layerHttpRouter({ group: OrderRpcs, path: "/rpc/orders" })
-  .pipe(Layer.provide(handlers), Layer.provide(RpcSerialization.layerJson))
-```
-
-### Cluster mode (with EntityProxy)
-
-```ts
-const OrderEntity = Entity.make("Order", [
-  Rpc.make("CreateOrder", {
-    payload: { orderId: Schema.String, customerId: Schema.String },
-    primaryKey: ({ orderId }) => orderId,
-    success: CommandResult,
-    error: OrderError
+export const handleCommand = (state, command) =>
+  Effect.gen(function*() {
+    const events = yield* decide(state, command)
+    let newState = state
+    for (const event of events) newState = evolve(newState, event)
+    return { events, state: newState }
   })
-]).annotateRpcs(ClusterSchema.Persisted, true)
-
-// Auto-derived RPC group + handlers
-const ProxyRpcs = EntityProxy.toRpcGroup(OrderEntity)
-const ProxyHandlers = EntityProxyServer.layerRpcHandlers(OrderEntity)
 ```
 
-## Run projections
-
-### Kafka-based
+## Expose via cluster Entity
 
 ```ts
-Subscription.make(OrdersViewProjector, {
-  topics: ["n2.aggregate.Order.events"],
-  groupId: "orders-view",
-  fromBeginning: true
-})
-```
+// entity.ts -- stateful actor with Ref
+export const OrderEntityLayer = OrderEntity.toLayer(
+  Effect.gen(function*() {
+    const address = yield* Entity.CurrentAddress
+    const stateRef = yield* Ref.make(initialOrderState)
+    let revision = 0
 
-### Native (typed, via EventLog.group)
+    const dispatch = (command) =>
+      Effect.gen(function*() {
+        const state = yield* Ref.get(stateRef)
+        const result = yield* handleCommand(state, command)
+        yield* Ref.set(stateRef, result.state)
+        revision += result.events.length
+        return new CommandResult({ orderId: address.entityId, revision })
+      })
 
-```ts
-EventLog.group(OrderEventGroup, (handlers) =>
-  handlers
-    .handle("OrderCreated", ({ payload }) => ...)  // payload fully typed
-    .handle("ItemAdded", ({ payload }) => ...)
+    return OrderEntity.of({
+      CreateOrder: (req) => dispatch(new CreateOrder(req.payload)),
+      AddItem: (req) => dispatch(new AddItem(req.payload)),
+    })
+  })
 )
 ```
 
-## Outbox pattern
+## Projections (native Effect)
 
 ```ts
-import { Singleton } from "@effect/cluster"
-
-Singleton.make("outbox-publisher",
-  OutboxPublisher.run({ aggregateType: "Order" })
+// projector-native.ts -- fully typed, transactional
+export const OrderProjectionHandlers = EventLog.group(
+  OrderEventGroup,
+  (handlers) =>
+    handlers
+      .handle("OrderCreated", ({ payload }) => ...)  // payload fully typed
+      .handle("ItemAdded", ({ payload }) => ...)
 )
 ```
 
 ## Testing
 
 ```ts
-// Aggregate test harness (given/when/then)
-const harness = AggregateTestHarness.make(OrderAggregate)
-const events = await runTest(harness.when(eid("order-1"), new CreateOrderCmd({ ... })))
+// Pure domain logic -- no infrastructure
+const { events, state } = await run(
+  handleCommand(emptyState, new CreateOrder({ orderId: "1", customerId: "c1" }))
+)
+expect(state.status).toBe("draft")
 
-// Cluster test (Entity.makeTestClient + TestRunner)
-const makeClient = yield* Entity.makeTestClient(OrderEntity, EntityBehaviorLayer)
+// Cluster integration -- Entity.makeTestClient
+const makeClient = yield* Entity.makeTestClient(OrderEntity, EntityLayer)
 const client = yield* makeClient("order-1")
-const result = yield* client.CreateOrder({ ... })
-
-// Workflow test (WorkflowEngine.layerMemory)
-const result = yield* MyWorkflow.execute({ orderId: "1" })
+const result = yield* client.CreateOrder({ orderId: "1", customerId: "c1" })
 ```
 
-## Add a new aggregate
+## Infrastructure -- use Effect directly
 
-1. Define contracts (events, commands, state, errors) in `contracts.ts`
-2. Define Entity with RPCs + `primaryKey` for cluster routing
-3. Implement `AggregateDefinition.define({ decide, evolve, schemas })`
-4. Wire entity behavior with `Entity.toLayer(handlers)`
-5. Add to composition root
+N2 doesn't wrap Effect's infrastructure. Use it directly:
 
-## Native Effect APIs exposed
+### Authentication
 
-The framework re-exports these from `@effect/cluster` and `@effect/experimental`:
+```ts
+import { RpcMiddleware } from "@effect/rpc"
 
-| API | Purpose |
-|-----|---------|
-| `Entity`, `EntityProxy`, `EntityProxyServer` | Distributed entities |
-| `Sharding`, `ShardingConfig` | Cluster routing |
-| `Snowflake` | Distributed ID generation |
-| `MessageStorage`, `SqlMessageStorage` | Command persistence |
-| `TestRunner`, `SingleRunner` | Test/dev clusters |
-| `Singleton` | Cluster-wide singletons |
-| `ClusterWorkflowEngine` | Durable workflows |
-| `Persistence`, `PersistedCache` | Key-value storage |
-| `EventJournal`, `Reactivity` | Event sourcing + invalidation |
-| `Machine` | State machine actors |
-| `RpcMiddleware`, `RpcTest` | Middleware + testing |
+class AuthMiddleware extends RpcMiddleware.Tag<AuthMiddleware>()(
+  "Auth", { provides: AuthContext, failure: Schema.String }
+) {}
+
+// Wire: OrderRpcs.middleware(AuthMiddleware)
+```
+
+### Observability
+
+```ts
+// Tracing -- built into Effect
+Effect.withSpan("handle-command", { attributes: { orderId } })
+
+// Metrics
+const commandsTotal = Metric.counter("commands.total", { incremental: true })
+Effect.tap(() => Metric.increment(commandsTotal))
+
+// Structured logging
+Effect.annotateLogs({ orderId, aggregateType: "Order" })
+```
+
+### Configuration
+
+```ts
+import * as Config from "effect/Config"
+
+const port = yield* Config.number("PORT").pipe(Config.withDefault(3000))
+const dbUrl = yield* Config.string("DATABASE_URL")
+```
+
+### Health checks
+
+```ts
+import * as HttpRouter from "@effect/platform/HttpRouter"
+
+HttpRouter.get("/health", HttpServerResponse.json({ status: "ok" }))
+HttpRouter.get("/ready", checkDeps.pipe(
+  Effect.map(() => HttpServerResponse.json({ status: "ok" })),
+  Effect.catchAll(() => HttpServerResponse.json({ status: "down" }, { status: 503 }))
+))
+```
+
+### Retry + Circuit breaker
+
+```ts
+import * as Schedule from "effect/Schedule"
+
+effect.pipe(
+  Effect.retry(Schedule.exponential("100 millis").pipe(Schedule.intersect(Schedule.recurs(3))))
+)
+```
+
+### Graceful shutdown
+
+```ts
+Effect.addFinalizer(() => Effect.log("draining..."))
+// Effect.runFork handles SIGTERM/SIGINT via runtime
+```
+
+### Cross-service communication
+
+```ts
+// Option 1: Cluster entities call each other via Sharding
+const inventoryClient = yield* InventoryEntity.client
+const stockClient = yield* inventoryClient("SKU-001")
+yield* stockClient.ReserveStock({ sku: "SKU-001", quantity: 5, orderId })
+
+// Option 2: EntityProxy exposes entities over HTTP
+const ProxyRpcs = EntityProxy.toRpcGroup(OrderEntity)
+const ProxyHandlers = EntityProxyServer.layerRpcHandlers(OrderEntity)
+
+// Option 3: EventLogRemote for cross-service event sync
+import { EventLogRemote } from "@effect/experimental"
+```
+
+### SQL persistence
+
+```ts
+// Already provided in src/adapters/postgres/
+import { PgEventLog } from "./adapters/postgres/PgEventLog.js"
+import { PgSnapshotStore } from "./adapters/postgres/PgSnapshotStore.js"
+```
+
+## Framework files (16 total)
+
+```
+framework/
+  contracts/    EventEnvelope
+  domain/       AggregateDefinition, BrandedId, Revision
+  runtime/      EventLog, EventJournalEventLog, SnapshotStore, Clock, IdGenerator
+  projection/   ProjectorDefinition, CheckpointStore, Replay
+  testing/      TestClock, DeterministicIdGenerator, ProjectorTestHarness
+```
+
+## Native Effect APIs (use directly)
+
+| Concern | Effect API |
+|---|---|
+| Entities | `@effect/cluster` Entity, Sharding, EntityProxy |
+| RPC | `@effect/rpc` Rpc, RpcGroup, RpcServer, RpcMiddleware |
+| Workflows | `@effect/workflow` Workflow, Activity, DurableClock |
+| Events | `@effect/experimental` EventLog, EventGroup, EventJournal |
+| Persistence | `@effect/experimental` Persistence |
+| Caching | `@effect/experimental` PersistedCache |
+| Reactivity | `@effect/experimental` Reactivity |
+| SQL | `@effect/sql-pg` |
+| HTTP | `@effect/platform` HttpRouter, HttpServer |
+| IDs | `@effect/cluster` Snowflake |
+| Tracing | `Effect.withSpan` |
+| Metrics | `Effect.Metric` |
+| Config | `effect/Config` |
+| Retry | `effect/Schedule` |
+| Testing | `@effect/cluster` TestRunner, `@effect/rpc` RpcTest |

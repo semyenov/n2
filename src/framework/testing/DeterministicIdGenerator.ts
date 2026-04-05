@@ -6,30 +6,25 @@
  */
 import * as Effect from "effect/Effect"
 import * as Ref from "effect/Ref"
-import * as Layer from "effect/Layer"
-import { IdGenerator, type IdGeneratorService } from "../runtime/IdGenerator.js"
+
+/**
+ * @since 1.0.0
+ * @category models
+ */
+export interface DeterministicIdGenerator {
+  readonly generate: Effect.Effect<string>
+}
 
 /**
  * @since 1.0.0
  * @category constructors
  */
-export const make = (
-  prefix: string = "test-id"
-): Effect.Effect<IdGeneratorService> =>
+export const make = (prefix: string = "test-id"): Effect.Effect<DeterministicIdGenerator> =>
   Effect.gen(function*() {
     const counter = yield* Ref.make(0)
-
-    const generate: Effect.Effect<string> = Ref.getAndUpdate(
-      counter,
-      (n) => n + 1
-    ).pipe(Effect.map((n) => `${prefix}-${n}`))
-
-    return { generate }
+    return {
+      generate: Ref.getAndUpdate(counter, (n) => n + 1).pipe(
+        Effect.map((n) => `${prefix}-${n}`)
+      )
+    }
   })
-
-/**
- * @since 1.0.0
- * @category layers
- */
-export const layer = (prefix?: string): Layer.Layer<IdGenerator> =>
-  Layer.effect(IdGenerator, make(prefix))

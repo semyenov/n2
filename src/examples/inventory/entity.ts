@@ -1,42 +1,44 @@
 /**
- * Inventory cluster entity.
+ * Inventory cluster entity. Stateful via Ref.
  */
 import * as Effect from "effect/Effect"
+import * as Ref from "effect/Ref"
 import * as Duration from "effect/Duration"
 import { Entity } from "@effect/cluster"
-import * as AggregateEntity from "../../framework/cluster/AggregateEntity.js"
-import { InventoryAggregate } from "./aggregate.js"
+import { handleCommand } from "./aggregate.js"
 import {
+  type InventoryState,
+  type InventoryCommand,
   InventoryEntity,
   StockResult,
   InsufficientStock,
   ReserveStock,
-  ReleaseStock
+  ReleaseStock,
+  initialInventoryState
 } from "./contracts.js"
 
-const { runtime: inventoryRuntime } = AggregateEntity.make(
-  InventoryAggregate,
-  InventoryEntity.protocol,
-  { maxIdleTime: Duration.minutes(30) }
-)
-
 export const InventoryEntityLayer = InventoryEntity.toLayer(
-  Effect.gen(function* () {
+  Effect.gen(function*() {
     const address = yield* Entity.CurrentAddress
+    const stateRef = yield* Ref.make<InventoryState>(initialInventoryState)
+    let revision = 0
+
+    const dispatch = (command: InventoryCommand) =>
+      Effect.gen(function*() {
+        const state = yield* Ref.get(stateRef)
+        const result = yield* handleCommand(state, command)
+        yield* Ref.set(stateRef, result.state)
+        revision += result.events.length
+        return result
+      })
+
     return InventoryEntity.of({
       ReserveStock: (req) =>
-        inventoryRuntime.handle(
-          address.entityId,
-          new ReserveStock({
+        dispatch(new ReserveStock(req.payload)).pipe(
+          Effect.map(({ state }) => new StockResult({
             sku: req.payload.sku,
-            quantity: req.payload.quantity,
-            orderId: req.payload.orderId
-          })
-        ).pipe(
-          Effect.map((r) => new StockResult({
-            sku: req.payload.sku,
-            available: r.state.available,
-            reserved: r.state.reserved
+            available: state.available,
+            reserved: state.reserved
           })),
           Effect.catchAll((err) => Effect.fail(
             err instanceof InsufficientStock
@@ -44,20 +46,12 @@ export const InventoryEntityLayer = InventoryEntity.toLayer(
               : new InsufficientStock({ sku: req.payload.sku, requested: 0, available: 0 })
           ))
         ),
-
       ReleaseStock: (req) =>
-        inventoryRuntime.handle(
-          address.entityId,
-          new ReleaseStock({
+        dispatch(new ReleaseStock(req.payload)).pipe(
+          Effect.map(({ state }) => new StockResult({
             sku: req.payload.sku,
-            quantity: req.payload.quantity,
-            orderId: req.payload.orderId
-          })
-        ).pipe(
-          Effect.map((r) => new StockResult({
-            sku: req.payload.sku,
-            available: r.state.available,
-            reserved: r.state.reserved
+            available: state.available,
+            reserved: state.reserved
           })),
           Effect.catchAll((err) => Effect.fail(
             err instanceof InsufficientStock
@@ -70,4 +64,4 @@ export const InventoryEntityLayer = InventoryEntity.toLayer(
   { maxIdleTime: Duration.minutes(30) }
 )
 
-export { inventoryRuntime, InventoryEntity }
+export { InventoryEntity }
