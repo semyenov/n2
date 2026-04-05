@@ -6,7 +6,7 @@
  */
 import * as Schema from "effect/Schema"
 import * as Option from "effect/Option"
-import { Rpc, RpcGroup } from "@effect/rpc"
+import { Rpc } from "@effect/rpc"
 import { Entity, ClusterSchema } from "@effect/cluster"
 
 // ---------------------------------------------------------------------------
@@ -160,28 +160,7 @@ export const OrderEntity = Entity.make("Order", [
 )
 
 // ---------------------------------------------------------------------------
-// Legacy RPC group (for direct non-cluster HTTP usage)
+// RPC group -- derived from Entity protocol (no duplication)
 // ---------------------------------------------------------------------------
 
-export class OrderRpcs extends RpcGroup.make(
-  Rpc.make("CreateOrder", {
-    payload: { customerId: Schema.String, orderId: Schema.String },
-    success: CommandResult,
-    error: OrderError
-  }),
-  Rpc.make("AddItem", {
-    payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number },
-    success: CommandResult,
-    error: OrderError
-  }),
-  Rpc.make("SubmitOrder", {
-    payload: { orderId: Schema.String },
-    success: CommandResult,
-    error: OrderError
-  }),
-  Rpc.make("CancelOrder", {
-    payload: { orderId: Schema.String, reason: Schema.String },
-    success: CommandResult,
-    error: OrderError
-  })
-) { }
+export const OrderRpcs = OrderEntity.protocol
