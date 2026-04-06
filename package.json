@@ -20,6 +20,7 @@
     "@effect/sql": "^0.51.0",
     "@effect/sql-pg": "^0.52.1",
     "@effect/workflow": "^0.18.0",
-    "effect": "^3.21.0"
+    "effect": "^3.21.0",
+    "mitata": "^1.0.34"
   }
 }
