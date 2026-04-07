@@ -42,7 +42,7 @@ export class OrderCancelled extends Schema.TaggedClass<OrderCancelled>()(
   { orderId: Schema.String, reason: Schema.String, cancelledAt: Schema.DateTimeUtc }
 ) { }
 
-const OrderEvents = N2.Definitions.defineEvents(
+const OrderEvents = N2.defineEvents(
   OrderCreated,
   ItemAdded,
   OrderSubmitted,
@@ -66,7 +66,7 @@ export class OrderNotFound extends Schema.TaggedError<OrderNotFound>()(
   { orderId: Schema.String }
 ) { }
 
-const OrderErrorDefinitions = N2.Definitions.defineErrors(OrderError, OrderNotFound)
+const OrderErrorDefinitions = N2.defineErrors(OrderError, OrderNotFound)
 
 export const OrderErrors = OrderErrorDefinitions.schema
 export type OrderErrors = typeof OrderErrors.Type
@@ -113,25 +113,41 @@ export class CommandResult extends Schema.Class<CommandResult>("CommandResult")(
 
 export class CreateOrder extends Schema.TaggedRequest<CreateOrder>("CreateOrder")(
   "CreateOrder",
-  { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, customerId: Schema.String } }
+  {
+    failure: OrderError, success: CommandResult,
+    payload: { orderId: Schema.String, customerId: Schema.String }
+  }
 ) { }
 
 export class AddItem extends Schema.TaggedRequest<AddItem>("AddItem")(
   "AddItem",
-  { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number } }
+  {
+    failure: OrderError, success: CommandResult,
+    payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number }
+  }
 ) { }
 
 export class SubmitOrder extends Schema.TaggedRequest<SubmitOrder>("SubmitOrder")(
   "SubmitOrder",
-  { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String } }
+  {
+    failure: OrderError, success: CommandResult,
+    payload: { orderId: Schema.String }
+  }
 ) { }
 
 export class CancelOrder extends Schema.TaggedRequest<CancelOrder>("CancelOrder")(
   "CancelOrder",
-  { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, reason: Schema.String } }
+  {
+    failure: OrderError, success: CommandResult,
+    payload: { orderId: Schema.String, reason: Schema.String }
+  }
 ) { }
 
-export const OrderCommands = N2.Definitions.defineCommands(
+// ---------------------------------------------------------------------------
+// Commands collection
+// ---------------------------------------------------------------------------
+
+export const OrderCommands = N2.defineCommands(
   CreateOrder,
   AddItem,
   SubmitOrder,
@@ -142,22 +158,8 @@ export const OrderCommand = OrderCommands.schema
 export type OrderCommand = typeof OrderCommand.Type
 
 // ---------------------------------------------------------------------------
-// Entity definition (derived from command classes)
+// Entity definition and RPC group (derived from commands, no duplication)
 // ---------------------------------------------------------------------------
 
-const pk = (p: { orderId: string }) => p.orderId
-
-export const OrderEntity = N2.Entities.persistedEntityFromCommands(
-  "Order",
-  pk,
-  CreateOrder,
-  AddItem,
-  SubmitOrder,
-  CancelOrder
-)
-
-// ---------------------------------------------------------------------------
-// RPC group -- derived from Entity protocol (no duplication)
-// ---------------------------------------------------------------------------
-
+export const OrderEntity = OrderCommands.toPersistedEntity("Order", (p) => p.orderId)
 export const OrderRpcs = OrderEntity.protocol

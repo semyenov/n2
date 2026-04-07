@@ -84,9 +84,11 @@ test("cross-aggregate saga: order + inventory coordination", async () => {
 })
 
 test("cross-aggregate: both entities via cluster", async () => {
-  const run = <A>(effect: Effect.Effect<A, unknown, unknown>): Promise<A> =>
-    // @ts-expect-error -- test erases R
-    effect.pipe(Effect.scoped, Effect.provide(ShardingConfig.layer({})), Effect.runPromise)
+  // Entity.makeTestClient yields R = unknown (opaque cluster type); ShardingConfig is satisfied at runtime.
+  const run = <A, E>(effect: Effect.Effect<A, E, unknown>): Promise<A> =>
+    Effect.runPromise(
+      effect.pipe(Effect.scoped, Effect.provide(ShardingConfig.layer({}))) as Effect.Effect<A, E, never>
+    )
 
   await run(
     Effect.gen(function* () {

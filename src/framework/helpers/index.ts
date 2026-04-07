@@ -8,28 +8,53 @@
  * ```ts
  * import * as N2 from "n2/framework/helpers/index.js"
  *
- * const Order = N2.define({
+ * const OrderCommands = N2.defineCommands(
+ *   (p) => p.orderId,
+ *   CreateOrder, AddItem, SubmitOrder
+ * )
+ * const OrderEntity = OrderCommands.toPersistedEntity("Order")
+ *
+ * const Order = N2.define<OrderEvent, OrderCommand>()({
  *   initialState,
- *   commands,
+ *   commands: OrderCommands.constructors,
  *   evolve,
  *   decide
  * })
  *
  * const OrderHandlers = Order.toRpcHandlers(OrderRpcs, { toResult, toError })
  * const OrderEntityLayer = Order.toEntityLayer(OrderEntity, { toResult, toError })
- * const OrderRoute = Order.toHttpRoute(OrderRpcs, "/rpc/orders", { handlers: OrderHandlers })
+ * const OrderRoute = Order.toHttpRoute(OrderRpcs, "/rpc/orders", OrderHandlers)
  * ```
  */
 export {
   define,
-  type AdapterOptions,
   type Definition,
-  type ExecutionContext,
-  type ExecutionErrorContext,
-  type ExecutionMode
+  type EntityAdapterOptions,
+  type RpcAdapterOptions
 } from "./Definition.js"
 
-export * as Definitions from "./Definitions.js"
-export * as Entities from "./Entities.js"
+export {
+  defineCommands,
+  defineErrors,
+  defineEvents,
+  defineSchemaUnion,
+  defineTaggedConstructors,
+  type CommandCollection,
+  type CommandDefinition,
+  type CommandFailureSchemaOf,
+  type CommandFields,
+  type CommandFieldsOf,
+  type CommandInfoOf,
+  type CommandPayloadFieldsOf,
+  type CommandPayloadTypeOf,
+  type CommandSuccessSchemaOf,
+  type CommandTagOf,
+  type SchemaUnion,
+  type Tagged,
+  type TaggedCollection,
+  type TaggedConstructor,
+  type TaggedConstructors,
+  type TaggedSchema
+} from "./Definitions.js"
 
 export { rpcFromCommand } from "./EntityBuilder.js"

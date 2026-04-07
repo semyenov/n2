@@ -1,4 +1,8 @@
+import * as Record from "effect/Record"
 import * as Schema from "effect/Schema"
+import { ClusterSchema, Entity } from "@effect/cluster"
+import type { Rpc } from "@effect/rpc"
+import { rpcFromCommand, type RpcFromCommandDefinition } from "./EntityBuilder.js"
 
 type Tagged = { readonly _tag: string }
 
@@ -73,16 +77,65 @@ type TaggedCollection<Members extends [TaggedSchema, ...Array<TaggedSchema>]> = 
   readonly constructors: TaggedConstructors<Members>
 }
 
+type AnyCommandDefinition = CommandDefinition<Tagged>
+
+type CommandPayload<Command extends AnyCommandDefinition> = CommandPayloadTypeOf<Command>
+
+type RpcTuple<Commands extends ReadonlyArray<AnyCommandDefinition>> = {
+  readonly [K in keyof Commands]: RpcFromCommandDefinition<Commands[K]>
+}
+
+type PrimaryKey<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> =
+  (payload: CommandPayload<Members[number]>) => string
+
+type EntityRpcs<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> =
+  RpcTuple<Members>[number]
+
 type CommandCollection<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> = {
   readonly schema: SchemaUnion<Members>
   readonly members: Members
   readonly constructors: TaggedConstructors<Members>
+  /**
+   * Derive a cluster Entity from the command set.
+   * The `primaryKey` function extracts the entity ID from any command payload.
+   */
+  readonly toEntity: <const Type extends string>(
+    name: Type,
+    primaryKey: PrimaryKey<Members>
+  ) => Entity.Entity<Type, EntityRpcs<Members>>
+  /**
+   * Derive a cluster Entity annotated with `ClusterSchema.Persisted`.
+   * The `primaryKey` function extracts the entity ID from any command payload.
+   */
+  readonly toPersistedEntity: <const Type extends string>(
+    name: Type,
+    primaryKey: PrimaryKey<Members>
+  ) => Entity.Entity<Type, EntityRpcs<Members>>
 }
 
 const constructorsByTag = <Members extends ReadonlyArray<TaggedSchema>>(
   members: Members
 ): TaggedConstructors<Members> =>
-  Object.fromEntries(members.map((member) => [member._tag, member])) as TaggedConstructors<Members>
+  Record.fromIterableWith(members, (member) => [member._tag, member]) as TaggedConstructors<Members>
+
+function buildRpcTuple<
+  Head extends AnyCommandDefinition,
+  const Tail extends ReadonlyArray<AnyCommandDefinition>
+>(
+  primaryKey: (payload: CommandPayload<Head | Tail[number]>) => string,
+  head: Head,
+  ...tail: Tail
+): readonly [RpcFromCommandDefinition<Head>, ...RpcTuple<Tail>]
+function buildRpcTuple(
+  primaryKey: (payload: { readonly [x: string]: any }) => string,
+  head: AnyCommandDefinition,
+  ...tail: ReadonlyArray<AnyCommandDefinition>
+): ReadonlyArray<Rpc.Any> {
+  const rpc = rpcFromCommand(head, primaryKey)
+  const [nextHead, ...nextTail] = tail
+  if (nextHead === undefined) return [rpc]
+  return [rpc, ...buildRpcTuple(primaryKey, nextHead, ...nextTail)]
+}
 
 export type {
   CommandCollection,
@@ -127,10 +180,43 @@ export const defineErrors = <const Members extends [TaggedSchema, ...Array<Tagge
   constructors: constructorsByTag(members)
 })
 
+/**
+ * Define a set of commands, yielding a collection with `.schema`,
+ * `.constructors`, `.toEntity(name, pk)` and `.toPersistedEntity(name, pk)`.
+ *
+ * The `primaryKey` function is supplied at entity derivation time rather than
+ * here, avoiding circular inference issues and keeping entity naming separate
+ * from domain command definitions.
+ *
+ * @example
+ * ```ts
+ * const OrderCommands = defineCommands(CreateOrder, AddItem, SubmitOrder)
+ * const OrderEntity = OrderCommands.toPersistedEntity("Order", (p) => p.orderId)
+ * ```
+ */
 export const defineCommands = <const Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]>(
   ...members: Members
-): CommandCollection<Members> => ({
-  schema: defineSchemaUnion(...members),
-  members,
-  constructors: constructorsByTag(members)
-})
+): CommandCollection<Members> => {
+  const buildEntity = (
+    name: string,
+    primaryKey: (payload: any) => string,
+    persisted: boolean
+  ) => {
+    const [head, ...tail] = members
+    const rpcs = buildRpcTuple(primaryKey, head!, ...tail) as readonly [Rpc.Any, ...ReadonlyArray<Rpc.Any>]
+    const entity = Entity.make(name, rpcs)
+    return persisted
+      ? entity.annotateRpcs(ClusterSchema.Persisted, true)
+      : entity
+  }
+
+  return {
+    schema: defineSchemaUnion(...members),
+    members,
+    constructors: constructorsByTag(members),
+    toEntity: <const Type extends string>(name: Type, primaryKey: PrimaryKey<Members>) =>
+      buildEntity(name, primaryKey as (payload: any) => string, false) as unknown as Entity.Entity<Type, EntityRpcs<Members>>,
+    toPersistedEntity: <const Type extends string>(name: Type, primaryKey: PrimaryKey<Members>) =>
+      buildEntity(name, primaryKey as (payload: any) => string, true) as unknown as Entity.Entity<Type, EntityRpcs<Members>>
+  }
+}

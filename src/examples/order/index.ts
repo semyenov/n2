@@ -18,4 +18,4 @@ const main = Effect.gen(function* () {
   yield* Effect.never
 }).pipe(Effect.provide(ServerLayer))
 
-Effect.runPromise(main as Effect.Effect<void, never, never>)
+Effect.runPromise(main)

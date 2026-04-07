@@ -18,8 +18,8 @@ import {
   initialOrderState as emptyState
 } from "./contracts.js"
 
-const run = <A>(effect: Effect.Effect<A, unknown, unknown>): Promise<A> =>
-  Effect.runPromise(effect as Effect.Effect<A>)
+const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
+  Effect.runPromise(effect)
 
 test("CreateOrder produces OrderCreated event", async () => {
   const result = await run(

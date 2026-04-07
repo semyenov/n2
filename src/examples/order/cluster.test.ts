@@ -20,9 +20,11 @@ import { InfrastructureLayer } from "./layers.js"
 const EntityBehaviorWithInfra = Layer.provide(OrderEntityLayer, InfrastructureLayer)
 const ShardingConfigLayer = ShardingConfig.layer({})
 
-const runCluster = <A>(effect: Effect.Effect<A, unknown, unknown>): Promise<A> =>
-  // @ts-expect-error -- test erases R
-  effect.pipe(Effect.scoped, Effect.provide(ShardingConfigLayer), Effect.runPromise)
+// Entity.makeTestClient yields R = unknown (opaque cluster type); ShardingConfig is satisfied at runtime.
+const runCluster = <A, E>(effect: Effect.Effect<A, E, unknown>): Promise<A> =>
+  Effect.runPromise(
+    effect.pipe(Effect.scoped, Effect.provide(ShardingConfigLayer)) as Effect.Effect<A, E, never>
+  )
 
 test("cluster mode: create and submit order", () =>
   runCluster(

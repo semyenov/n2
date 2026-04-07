@@ -19,7 +19,7 @@ export class StockReleased extends Schema.TaggedClass<StockReleased>()(
   { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String }
 ) {}
 
-const InventoryEvents = N2.Definitions.defineEvents(StockReserved, StockReleased)
+const InventoryEvents = N2.defineEvents(StockReserved, StockReleased)
 
 export const InventoryEvent = InventoryEvents.schema
 export type InventoryEvent = typeof InventoryEvent.Type
@@ -33,7 +33,7 @@ export class InsufficientStock extends Schema.TaggedError<InsufficientStock>()(
   { sku: Schema.String, requested: Schema.Number, available: Schema.Number }
 ) {}
 
-const InventoryErrorDefinitions = N2.Definitions.defineErrors(InsufficientStock)
+const InventoryErrorDefinitions = N2.defineErrors(InsufficientStock)
 
 export const InventoryErrors = InventoryErrorDefinitions.schema
 export type InventoryErrors = typeof InventoryErrors.Type
@@ -78,7 +78,11 @@ export class ReleaseStock extends Schema.TaggedRequest<ReleaseStock>("ReleaseSto
   { failure: InsufficientStock, success: StockResult, payload: { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String } }
 ) {}
 
-export const InventoryCommands = N2.Definitions.defineCommands(
+// ---------------------------------------------------------------------------
+// Commands collection
+// ---------------------------------------------------------------------------
+
+export const InventoryCommands = N2.defineCommands(
   ReserveStock,
   ReleaseStock
 )
@@ -87,14 +91,7 @@ export const InventoryCommand = InventoryCommands.schema
 export type InventoryCommand = typeof InventoryCommand.Type
 
 // ---------------------------------------------------------------------------
-// Entity (derived from command classes)
+// Entity definition (derived from commands, no duplication)
 // ---------------------------------------------------------------------------
 
-const pk = (p: { sku: string }) => p.sku
-
-export const InventoryEntity = N2.Entities.persistedEntityFromCommands(
-  "Inventory",
-  pk,
-  ReserveStock,
-  ReleaseStock
-)
+export const InventoryEntity = InventoryCommands.toPersistedEntity("Inventory", (p: { sku: string }) => p.sku)

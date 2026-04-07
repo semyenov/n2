@@ -45,8 +45,8 @@ import {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const runEffect = <A>(effect: Effect.Effect<A, unknown, unknown>): Promise<A> =>
-  Effect.runPromise(effect as Effect.Effect<A>)
+const runEffect = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
+  Effect.runPromise(effect)
 
 /** Pre-built state: a draft order with N items */
 const makeDraftState = (itemCount: number): OrderState =>

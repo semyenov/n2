@@ -35,6 +35,13 @@ type DecideHandlers<State, Command extends Tagged, Event extends Tagged, Err, R>
   ) => Effect.Effect<ReadonlyArray<Event>, Err, R>
 }
 
+type DecideEventsFor<Cmd extends Tagged, Handlers> =
+  TagOf<Cmd> extends keyof Handlers
+    ? Handlers[TagOf<Cmd>] extends (...args: any[]) => Effect.Effect<ReadonlyArray<infer E>, any, any>
+      ? E
+      : never
+    : never
+
 const commandTags = <Command extends Tagged>(
   commands: CommandConstructors<Command>
 ): ReadonlyArray<TagOf<Command>> =>
@@ -59,45 +66,26 @@ const makeRoute = <Rpcs extends Rpc.Any, R>(
       Layer.provide(HttpLayerRouter.cors())
     )
 
-export type ExecutionMode = "entity" | "rpc"
-
-export type ExecutionContext<
-  Mode extends ExecutionMode,
-  State,
-  Command,
-  Event
-> = {
-  readonly mode: Mode
-  readonly entityId: Mode extends "entity" ? string : undefined
-  readonly revision: Mode extends "entity" ? number : undefined
-  readonly payload: unknown
-  readonly command: Command
-  readonly events: ReadonlyArray<Event>
-  readonly state: State
+/** Options for mapping execution results when wiring to a cluster Entity. */
+export interface EntityAdapterOptions<State, Command, Event, Result, MappedErr> {
+  readonly toResult: (ctx: {
+    readonly entityId: string
+    readonly revision: number
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => Result
+  readonly toError: (error: unknown) => MappedErr
 }
 
-export type ExecutionErrorContext<
-  Mode extends ExecutionMode,
-  State,
-  Command,
-  Event
-> = ExecutionContext<Mode, State, Command, Event> & {
-  readonly error: unknown
-}
-
-export interface AdapterOptions<
-  Mode extends ExecutionMode,
-  State,
-  Command,
-  Event,
-  Result,
-  MappedErr
-> {
-  readonly toResult: (context: ExecutionContext<Mode, State, Command, Event>) => Result
-  readonly toError: (
-    error: unknown,
-    context: ExecutionErrorContext<Mode, State, Command, Event>
-  ) => MappedErr
+/** Options for mapping execution results when wiring to stateless RPC handlers. */
+export interface RpcAdapterOptions<State, Command, Event, Result, MappedErr> {
+  readonly toResult: (ctx: {
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => Result
+  readonly toError: (error: unknown) => MappedErr
 }
 
 export interface Definition<
@@ -105,7 +93,8 @@ export interface Definition<
   Event extends Tagged,
   Command extends Tagged,
   Err,
-  R
+  R,
+  Handlers extends DecideHandlers<State, Command, Event, Err, R> = DecideHandlers<State, Command, Event, Err, R>
 > {
   readonly initialState: State
   readonly commands: CommandConstructors<Command>
@@ -117,11 +106,11 @@ export interface Definition<
     state: State,
     command: Command
   ) => Effect.Effect<ReadonlyArray<Event>, Err, R>
-  readonly handle: (
+  readonly handle: <Cmd extends Command>(
     state: State,
-    command: Command
+    command: Cmd
   ) => Effect.Effect<
-    { readonly events: ReadonlyArray<Event>; readonly state: State },
+    { readonly events: ReadonlyArray<DecideEventsFor<Cmd, Handlers>>; readonly state: State },
     Err,
     R
   >
@@ -135,7 +124,7 @@ export interface Definition<
   >
   readonly toEntityLayer: <Type extends string, Rpcs extends Rpc.Any, Result, MappedErr>(
     entity: Entity.Entity<Type, Rpcs>,
-    options: AdapterOptions<"entity", State, Command, Event, Result, MappedErr>,
+    options: EntityAdapterOptions<State, Command, Event, Result, MappedErr>,
     layerOptions?: {
       readonly maxIdleTime?: DurationInput
       readonly concurrency?: number | "unbounded"
@@ -147,25 +136,22 @@ export interface Definition<
   >
   readonly toRpcHandlers: <Rpcs extends Rpc.Any, Result, MappedErr>(
     group: RpcGroup.RpcGroup<Rpcs>,
-    options: AdapterOptions<"rpc", State, Command, Event, Result, MappedErr>
+    options: RpcAdapterOptions<State, Command, Event, Result, MappedErr>
   ) => Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
   readonly toHttpRoute: <Rpcs extends Rpc.Any>(
     group: RpcGroup.RpcGroup<Rpcs>,
     path: `/${string}`,
     handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
-  ) => Layer.Layer<
-    never,
-    never,
-    | R
-    | HttpLayerRouter.HttpRouter
-    | RpcSerialization.RpcSerialization
-    | Rpc.Context<Rpcs>
-    | Rpc.Middleware<Rpcs>
-  >
+  ) => Layer.Layer<never, never, R>
 }
 
 /**
  * Defines a domain model once and derives aggregate, RPC, and entity helpers.
+ *
+ * The double-curry `define<Event, Command>()({...})` enables exhaustive handler
+ * checking: TypeScript verifies all events have `evolve` handlers and all
+ * commands have `decide` handlers, without requiring `State`/`Err`/`R` to be
+ * specified explicitly.
  *
  * @since 1.0.0
  */
@@ -173,12 +159,12 @@ export const define = <
   Event extends Tagged,
   Command extends Tagged
 >() =>
-  <State, Err, R>(options: {
+  <State, Err, R, const Handlers extends DecideHandlers<State, Command, Event, Err, R>>(options: {
     readonly initialState: State
     readonly commands: CommandConstructors<Command>
     readonly evolve: EvolveHandlers<State, Event>
-    readonly decide: DecideHandlers<State, Command, Event, Err, R>
-  }): Definition<State, Event, Command, Err, R> => {
+    readonly decide: Handlers
+  }): Definition<State, Event, Command, Err, R, Handlers> => {
     const commandsByTag: Readonly<Record<TagOf<Command>, new (...args: ReadonlyArray<never>) => Command>> =
       options.commands
 
@@ -187,7 +173,7 @@ export const define = <
       return (options.evolve as Record<TagOf<Event>, (state: State, event: Event) => State>)[tag](state, event)
     }
 
-    const decide: Definition<State, Event, Command, Err, R>["decide"] = (state, command) => {
+    const decide = (state: State, command: Command): Effect.Effect<ReadonlyArray<Event>, Err, R> => {
       const tag = command._tag as TagOf<Command>
       return (
         options.decide as Record<
@@ -197,10 +183,7 @@ export const define = <
       )[tag](state, command)
     }
 
-    const handle: Definition<State, Event, Command, Err, R>["handle"] = (
-      state,
-      command
-    ) =>
+    const handle = <Cmd extends Command>(state: State, command: Cmd) =>
       Effect.gen(function* () {
         const events = yield* decide(state, command)
         let nextState = state
@@ -211,7 +194,11 @@ export const define = <
           events,
           state: nextState
         }
-      })
+      }) as Effect.Effect<
+        { readonly events: ReadonlyArray<DecideEventsFor<Cmd, Handlers>>; readonly state: State },
+        Err,
+        R
+      >
 
     const run: Definition<State, Event, Command, Err, R>["run"] = (
       commands,
@@ -235,7 +222,7 @@ export const define = <
       MappedErr
     >(
       entity: Entity.Entity<Type, Rpcs>,
-      adapter: AdapterOptions<"entity", State, Command, Event, Result, MappedErr>,
+      adapter: EntityAdapterOptions<State, Command, Event, Result, MappedErr>,
       layerOptions?: {
         readonly maxIdleTime?: DurationInput
         readonly concurrency?: number | "unbounded"
@@ -264,28 +251,15 @@ export const define = <
                 return yield* handle(state, command).pipe(
                   Effect.matchEffect({
                     onFailure: (error) =>
-                      Effect.fail(
-                        adapter.toError(error, {
-                          mode: "entity",
-                          entityId: address.entityId,
-                          revision,
-                          payload: request.payload,
-                          command,
-                          events: [],
-                          state,
-                          error
-                        })
-                      ),
+                      Effect.fail(adapter.toError(error)),
                     onSuccess: (result) =>
                       Effect.gen(function* () {
                         yield* Ref.set(stateRef, result.state)
                         revision += result.events.length
 
                         return adapter.toResult({
-                          mode: "entity",
                           entityId: address.entityId,
                           revision,
-                          payload: request.payload,
                           command,
                           events: result.events,
                           state: result.state
@@ -313,7 +287,7 @@ export const define = <
       MappedErr
     >(
       group: RpcGroup.RpcGroup<Rpcs>,
-      adapter: AdapterOptions<"rpc", State, Command, Event, Result, MappedErr>
+      adapter: RpcAdapterOptions<State, Command, Event, Result, MappedErr>
     ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R> => {
       const handlers: Partial<RpcGroup.HandlersFrom<Rpcs>> = {}
 
@@ -327,25 +301,10 @@ export const define = <
             return yield* handle(options.initialState, command).pipe(
               Effect.matchEffect({
                 onFailure: (error) =>
-                  Effect.fail(
-                    adapter.toError(error, {
-                      mode: "rpc",
-                      entityId: undefined,
-                      revision: undefined,
-                      payload,
-                      command,
-                      events: [],
-                      state: options.initialState,
-                      error
-                    })
-                  ),
+                  Effect.fail(adapter.toError(error)),
                 onSuccess: (result) =>
                   Effect.succeed(
                     adapter.toResult({
-                      mode: "rpc",
-                      entityId: undefined,
-                      revision: undefined,
-                      payload,
                       command,
                       events: result.events,
                       state: result.state
