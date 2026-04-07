@@ -26,7 +26,7 @@ test("CreateOrder produces OrderCreated event", async () => {
     handleCommand(emptyState, new CreateOrder({ orderId: "order-1", customerId: "cust-1" }))
   )
   expect(result.events.length).toBe(1)
-  const event = result.events[0] as OrderCreated
+  const event = result.events[0]!
   expect(event._tag).toBe("OrderCreated")
   expect(event.customerId).toBe("cust-1")
   expect(result.state.status).toBe("draft")

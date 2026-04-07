@@ -35,12 +35,48 @@ type DecideHandlers<State, Command extends Tagged, Event extends Tagged, Err, R>
   ) => Effect.Effect<ReadonlyArray<Event>, Err, R>
 }
 
-type DecideEventsFor<Cmd extends Tagged, Handlers> =
+/**
+ * Looser constraint for capturing `Handlers` precisely — Err/R use `unknown`
+ * (not `any`) to break the circular inference that would occur if they were
+ * explicit type params in the same inference site as `Handlers`.
+ * `Effect` is covariant in all three positions, so every concrete handler
+ * satisfies this constraint.
+ */
+type DecideHandlersBase<State, Command extends Tagged, Event extends Tagged> = {
+  readonly [K in TagOf<Command>]:
+  (
+    state: State,
+    command: Extract<Command, { readonly _tag: K }>
+  ) => Effect.Effect<ReadonlyArray<Event>, unknown, unknown>
+}
+
+/** Union of all error types across every decide handler. */
+type HandlersErr<State, Command extends Tagged, H extends DecideHandlersBase<State, Command, Tagged>> = {
+  [K in TagOf<Command>]: H[K] extends (
+    state: State,
+    command: Extract<Command, { _tag: K }>
+  ) => Effect.Effect<ReadonlyArray<infer _A>, infer E, infer _R> ? E : never
+}[TagOf<Command>]
+
+/** Union of all requirement types across every decide handler. */
+type HandlersR<State, Command extends Tagged, H extends DecideHandlersBase<State, Command, Tagged>> = {
+  [K in TagOf<Command>]: H[K] extends (
+    state: State,
+    command: Extract<Command, { _tag: K }>
+  ) => Effect.Effect<ReadonlyArray<infer _A>, infer _E, infer R> ? R : never
+}[TagOf<Command>]
+
+/**
+ * Extracts the specific event element type emitted by the handler for command `Cmd`.
+ * The bounded `infer E extends Event` makes `DecideEventsFor<Cmd, H, Event> extends Event`
+ * known to TypeScript, eliminating downstream casts to `ReadonlyArray<Event>`.
+ */
+type DecideEventsFor<Cmd extends Tagged, Handlers, Event extends Tagged> =
   TagOf<Cmd> extends keyof Handlers
-    ? Handlers[TagOf<Cmd>] extends (...args: any[]) => Effect.Effect<ReadonlyArray<infer E>, any, any>
+    ? Handlers[TagOf<Cmd>] extends (...args: infer _Args) => Effect.Effect<ReadonlyArray<infer E extends Event>, infer _Err, infer _R>
       ? E
-      : never
-    : never
+      : Event
+    : Event
 
 const commandTags = <Command extends Tagged>(
   commands: CommandConstructors<Command>
@@ -94,7 +130,7 @@ export interface Definition<
   Command extends Tagged,
   Err,
   R,
-  Handlers extends DecideHandlers<State, Command, Event, Err, R> = DecideHandlers<State, Command, Event, Err, R>
+  Handlers extends DecideHandlersBase<State, Command, Event> = DecideHandlersBase<State, Command, Event>
 > {
   readonly initialState: State
   readonly commands: CommandConstructors<Command>
@@ -110,7 +146,7 @@ export interface Definition<
     state: State,
     command: Cmd
   ) => Effect.Effect<
-    { readonly events: ReadonlyArray<DecideEventsFor<Cmd, Handlers>>; readonly state: State },
+    { readonly events: ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>; readonly state: State },
     Err,
     R
   >
@@ -159,12 +195,15 @@ export const define = <
   Event extends Tagged,
   Command extends Tagged
 >() =>
-  <State, Err, R, const Handlers extends DecideHandlers<State, Command, Event, Err, R>>(options: {
+  <State, const Handlers extends DecideHandlersBase<State, Command, Event>>(options: {
     readonly initialState: State
     readonly commands: CommandConstructors<Command>
     readonly evolve: EvolveHandlers<State, Event>
     readonly decide: Handlers
-  }): Definition<State, Event, Command, Err, R, Handlers> => {
+  }): Definition<State, Event, Command, HandlersErr<State, Command, Handlers>, HandlersR<State, Command, Handlers>, Handlers> => {
+    type Err = HandlersErr<State, Command, Handlers>
+    type R = HandlersR<State, Command, Handlers>
+
     const commandsByTag: Readonly<Record<TagOf<Command>, new (...args: ReadonlyArray<never>) => Command>> =
       options.commands
 
@@ -173,32 +212,33 @@ export const define = <
       return (options.evolve as Record<TagOf<Event>, (state: State, event: Event) => State>)[tag](state, event)
     }
 
-    const decide = (state: State, command: Command): Effect.Effect<ReadonlyArray<Event>, Err, R> => {
-      const tag = command._tag as TagOf<Command>
-      return (
-        options.decide as Record<
-          TagOf<Command>,
-          (state: State, command: Command) => Effect.Effect<ReadonlyArray<Event>, Err, R>
-        >
-      )[tag](state, command)
+    // Generic dispatch: indexes the precise per-tag handler and calls it with
+    // the specific command. One `as unknown as` is unavoidable here:
+    // TypeScript cannot correlate `command._tag as TagOf<Cmd>` with the handler's
+    // parameter type `Extract<Command, {_tag: TagOf<Cmd>}>` — function parameter
+    // contravariance prevents a direct `as` cast on a function type. This is the
+    // single remaining unsafe cast, replacing four scattered casts in the old design.
+    const dispatch = <Cmd extends Command>(state: State, command: Cmd): Effect.Effect<ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>, Err, R> => {
+      const tag = command._tag as TagOf<Cmd>
+      const handler = options.decide[tag] as unknown as (state: State, command: Cmd) => Effect.Effect<ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>, Err, R>
+      return handler(state, command)
     }
 
+    const decide = (state: State, command: Command): Effect.Effect<ReadonlyArray<Event>, Err, R> =>
+      dispatch(state, command)
+
+    // dispatch returns ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>,
+    // and DecideEventsFor<Cmd, Handlers, Event> extends Event (bounded infer),
+    // so evolve(state, event) type-checks without a cast.
     const handle = <Cmd extends Command>(state: State, command: Cmd) =>
       Effect.gen(function* () {
-        const events = yield* decide(state, command)
+        const events = yield* dispatch(state, command)
         let nextState = state
         for (const event of events) {
           nextState = evolve(nextState, event)
         }
-        return {
-          events,
-          state: nextState
-        }
-      }) as Effect.Effect<
-        { readonly events: ReadonlyArray<DecideEventsFor<Cmd, Handlers>>; readonly state: State },
-        Err,
-        R
-      >
+        return { events, state: nextState }
+      })
 
     const run: Definition<State, Event, Command, Err, R>["run"] = (
       commands,
@@ -209,7 +249,7 @@ export const define = <
         let currentState = state
         for (const command of commands) {
           const result = yield* handle(currentState, command)
-          allEvents = allEvents.concat(result.events as Array<Event>)
+          allEvents = allEvents.concat(result.events)
           currentState = result.state
         }
         return { events: allEvents as ReadonlyArray<Event>, state: currentState }
