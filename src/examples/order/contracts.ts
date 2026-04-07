@@ -6,7 +6,6 @@
  */
 import * as Schema from "effect/Schema"
 import * as Option from "effect/Option"
-import { Entity, ClusterSchema } from "@effect/cluster"
 import * as N2 from "../../framework/helpers/index.js"
 
 // ---------------------------------------------------------------------------
@@ -43,7 +42,14 @@ export class OrderCancelled extends Schema.TaggedClass<OrderCancelled>()(
   { orderId: Schema.String, reason: Schema.String, cancelledAt: Schema.DateTimeUtc }
 ) { }
 
-export const OrderEvent = Schema.Union(OrderCreated, ItemAdded, OrderSubmitted, OrderCancelled)
+const OrderEvents = N2.Definitions.defineEvents(
+  OrderCreated,
+  ItemAdded,
+  OrderSubmitted,
+  OrderCancelled
+)
+
+export const OrderEvent = OrderEvents.schema
 export type OrderEvent = typeof OrderEvent.Type
 
 // ---------------------------------------------------------------------------
@@ -60,7 +66,9 @@ export class OrderNotFound extends Schema.TaggedError<OrderNotFound>()(
   { orderId: Schema.String }
 ) { }
 
-export const OrderErrors = Schema.Union(OrderError, OrderNotFound)
+const OrderErrorDefinitions = N2.Definitions.defineErrors(OrderError, OrderNotFound)
+
+export const OrderErrors = OrderErrorDefinitions.schema
 export type OrderErrors = typeof OrderErrors.Type
 
 // ---------------------------------------------------------------------------
@@ -123,15 +131,15 @@ export class CancelOrder extends Schema.TaggedRequest<CancelOrder>("CancelOrder"
   { failure: OrderError, success: CommandResult, payload: { orderId: Schema.String, reason: Schema.String } }
 ) { }
 
-export const OrderCommand = Schema.Union(CreateOrder, AddItem, SubmitOrder, CancelOrder)
-export type OrderCommand = typeof OrderCommand.Type
-
-export const OrderCommands = {
+export const OrderCommands = N2.Definitions.defineCommands(
   CreateOrder,
   AddItem,
   SubmitOrder,
   CancelOrder
-} as const
+)
+
+export const OrderCommand = OrderCommands.schema
+export type OrderCommand = typeof OrderCommand.Type
 
 // ---------------------------------------------------------------------------
 // Entity definition (derived from command classes)
@@ -139,12 +147,14 @@ export const OrderCommands = {
 
 const pk = (p: { orderId: string }) => p.orderId
 
-export const OrderEntity = Entity.make("Order", [
-  N2.rpcFromCommand(CreateOrder, pk),
-  N2.rpcFromCommand(AddItem, pk),
-  N2.rpcFromCommand(SubmitOrder, pk),
-  N2.rpcFromCommand(CancelOrder, pk),
-]).annotateRpcs(ClusterSchema.Persisted, true)
+export const OrderEntity = N2.Entities.persistedEntityFromCommands(
+  "Order",
+  pk,
+  CreateOrder,
+  AddItem,
+  SubmitOrder,
+  CancelOrder
+)
 
 // ---------------------------------------------------------------------------
 // RPC group -- derived from Entity protocol (no duplication)

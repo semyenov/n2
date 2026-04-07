@@ -3,7 +3,6 @@
  * Commands are Schema.TaggedRequest.
  */
 import * as Schema from "effect/Schema"
-import { Entity, ClusterSchema } from "@effect/cluster"
 import * as N2 from "../../framework/helpers/index.js"
 
 // ---------------------------------------------------------------------------
@@ -20,7 +19,9 @@ export class StockReleased extends Schema.TaggedClass<StockReleased>()(
   { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String }
 ) {}
 
-export const InventoryEvent = Schema.Union(StockReserved, StockReleased)
+const InventoryEvents = N2.Definitions.defineEvents(StockReserved, StockReleased)
+
+export const InventoryEvent = InventoryEvents.schema
 export type InventoryEvent = typeof InventoryEvent.Type
 
 // ---------------------------------------------------------------------------
@@ -32,7 +33,9 @@ export class InsufficientStock extends Schema.TaggedError<InsufficientStock>()(
   { sku: Schema.String, requested: Schema.Number, available: Schema.Number }
 ) {}
 
-export const InventoryErrors = Schema.Union(InsufficientStock)
+const InventoryErrorDefinitions = N2.Definitions.defineErrors(InsufficientStock)
+
+export const InventoryErrors = InventoryErrorDefinitions.schema
 export type InventoryErrors = typeof InventoryErrors.Type
 
 // ---------------------------------------------------------------------------
@@ -75,13 +78,13 @@ export class ReleaseStock extends Schema.TaggedRequest<ReleaseStock>("ReleaseSto
   { failure: InsufficientStock, success: StockResult, payload: { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String } }
 ) {}
 
-export const InventoryCommand = Schema.Union(ReserveStock, ReleaseStock)
-export type InventoryCommand = typeof InventoryCommand.Type
-
-export const InventoryCommands = {
+export const InventoryCommands = N2.Definitions.defineCommands(
   ReserveStock,
   ReleaseStock
-} as const
+)
+
+export const InventoryCommand = InventoryCommands.schema
+export type InventoryCommand = typeof InventoryCommand.Type
 
 // ---------------------------------------------------------------------------
 // Entity (derived from command classes)
@@ -89,7 +92,9 @@ export const InventoryCommands = {
 
 const pk = (p: { sku: string }) => p.sku
 
-export const InventoryEntity = Entity.make("Inventory", [
-  N2.rpcFromCommand(ReserveStock, pk),
-  N2.rpcFromCommand(ReleaseStock, pk),
-]).annotateRpcs(ClusterSchema.Persisted, true)
+export const InventoryEntity = N2.Entities.persistedEntityFromCommands(
+  "Inventory",
+  pk,
+  ReserveStock,
+  ReleaseStock
+)

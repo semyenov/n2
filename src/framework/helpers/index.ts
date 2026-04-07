@@ -29,4 +29,7 @@ export {
   type ExecutionMode
 } from "./Definition.js"
 
+export * as Definitions from "./Definitions.js"
+export * as Entities from "./Entities.js"
+
 export { rpcFromCommand } from "./EntityBuilder.js"

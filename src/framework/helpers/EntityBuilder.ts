@@ -6,19 +6,73 @@
  */
 import type * as Schema from "effect/Schema"
 import { Rpc } from "@effect/rpc"
+import type {
+  CommandDefinition,
+  CommandFields,
+  CommandInfoOf,
+  CommandPayloadFieldsOf,
+  CommandPayloadTypeOf,
+  Tagged,
+} from "./Definitions.js"
 
-type RpcWithPrimaryKeyOptions<
-  Payload extends Schema.Struct.Fields,
+type PayloadFields<Fields extends CommandFields> = Omit<Fields, "_tag">
+
+type PayloadType<Fields extends CommandFields> = Schema.Simplify<
+  Schema.Struct.Type<NoInfer<PayloadFields<Fields>>>
+>
+
+type PayloadFieldsOf<Command extends CommandDefinition<Tagged>> =
+  CommandPayloadFieldsOf<Command>
+
+type PayloadTypeOf<Command extends CommandDefinition<Tagged>> =
+  CommandPayloadTypeOf<Command>
+
+type RpcFromCommandDefinition<Command extends CommandDefinition<Tagged>> =
+  CommandInfoOf<Command> extends {
+    readonly tag: infer Tag extends string
+    readonly fields: infer Fields extends CommandFields
+    readonly success: infer Success extends Schema.Schema.Any
+    readonly failure: infer Failure extends Schema.Schema.All
+  }
+    ? ReturnType<typeof Rpc.make<Tag, PayloadFields<Fields>, Success, Failure>>
+    : never
+
+const stripTagField = <Fields extends CommandFields>(
+  fields: Fields
+): PayloadFields<Fields> => {
+  const { _tag: _ignored, ...payload } = fields
+  return payload
+}
+
+type RpcMakePrimaryKey<Fields extends CommandFields> =
+  [PayloadFields<Fields>] extends [Schema.Struct.Fields] ?
+    (payload: PayloadType<Fields>) => string :
+    never
+
+type RpcPrimaryKeyOf<Command extends CommandDefinition<Tagged>> =
+  (payload: PayloadTypeOf<Command>) => string
+
+const makeRpcFromFields = <
+  Tag extends string,
+  Fields extends CommandFields,
   Success extends Schema.Schema.Any,
   Failure extends Schema.Schema.All
-> = {
-  readonly payload: Payload
-  readonly primaryKey: [Payload] extends [Schema.Struct.Fields] ?
-    (payload: Schema.Simplify<Schema.Struct.Type<Payload>>) => string :
-    never
-  readonly success: Success
-  readonly error: Failure
-}
+>(
+  tag: Tag,
+  fields: Fields,
+  success: Success,
+  failure: Failure,
+  primaryKey: (payload: PayloadType<Fields>) => string
+): ReturnType<typeof Rpc.make<Tag, PayloadFields<Fields>, Success, Failure>> =>
+  Rpc.make<Tag, PayloadFields<Fields>, Success, Failure>(
+    tag,
+    {
+      payload: stripTagField(fields),
+      primaryKey: primaryKey as RpcMakePrimaryKey<Fields>,
+      success,
+      error: failure
+    }
+  )
 
 /**
  * Derives an Rpc from a `Schema.TaggedRequest` command class.
@@ -43,25 +97,24 @@ type RpcWithPrimaryKeyOptions<
  */
 export const rpcFromCommand = <
   Tag extends string,
-  Fields extends { readonly _tag: Schema.Struct.Field } & Schema.Struct.Fields,
+  Fields extends CommandFields,
   Success extends Schema.Schema.Any,
   Failure extends Schema.Schema.All
 >(
-  Cmd: {
+  command: {
     readonly _tag: Tag
     readonly fields: Fields
     readonly success: Success
     readonly failure: Failure
   },
-  primaryKey: (payload: Schema.Simplify<Schema.Struct.Type<Omit<Fields, "_tag">>>) => string
-) => {
-  const { _tag: _ignored, ...payload } = Cmd.fields
-  const options = {
-    payload,
-    primaryKey,
-    success: Cmd.success,
-    error: Cmd.failure,
-  } as unknown as RpcWithPrimaryKeyOptions<Omit<Fields, "_tag">, Success, Failure>
+  primaryKey: (payload: PayloadType<Fields>) => string
+) =>
+  makeRpcFromFields(
+    command._tag,
+    command.fields,
+    command.success,
+    command.failure,
+    primaryKey
+  )
 
-  return Rpc.make<Tag, Omit<Fields, "_tag">, Success, Failure>(Cmd._tag, options)
-}
+export type { PayloadFieldsOf, PayloadTypeOf, RpcFromCommandDefinition, RpcPrimaryKeyOf }

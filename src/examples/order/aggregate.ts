@@ -9,7 +9,7 @@ import * as C from "./contracts.js"
 
 export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
   initialState: C.initialOrderState,
-  commands: C.OrderCommands,
+  commands: C.OrderCommands.constructors,
   evolve: {
     OrderCreated: (state, event) => ({
       ...state,

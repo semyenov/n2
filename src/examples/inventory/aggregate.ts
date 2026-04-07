@@ -7,7 +7,7 @@ import * as C from "./contracts.js"
 
 export const Inventory = N2.define<C.InventoryEvent, C.InventoryCommand>()({
   initialState: C.initialInventoryState,
-  commands: C.InventoryCommands,
+  commands: C.InventoryCommands.constructors,
   evolve: {
     StockReserved: (state, event) => ({
       ...state,
