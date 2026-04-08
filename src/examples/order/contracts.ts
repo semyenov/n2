@@ -143,6 +143,27 @@ export class CancelOrder extends Schema.TaggedRequest<CancelOrder>("CancelOrder"
   }
 ) { }
 
+export class GetOrder extends Schema.TaggedRequest<GetOrder>("GetOrder")(
+  "GetOrder",
+  {
+    failure: OrderNotFound, success: OrderState,
+    payload: { orderId: Schema.String }
+  }
+) { }
+
+export class FulfillmentResult extends Schema.Class<FulfillmentResult>("FulfillmentResult")({
+  orderId: Schema.String,
+  shipped: Schema.Boolean
+}) { }
+
+export class FulfillOrder extends Schema.TaggedRequest<FulfillOrder>("FulfillOrder")(
+  "FulfillOrder",
+  {
+    failure: OrderError, success: FulfillmentResult,
+    payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number }
+  }
+) { }
+
 // ---------------------------------------------------------------------------
 // Commands collection
 // ---------------------------------------------------------------------------
@@ -151,7 +172,9 @@ export const OrderCommands = N2.defineCommands(
   CreateOrder,
   AddItem,
   SubmitOrder,
-  CancelOrder
+  CancelOrder,
+  GetOrder,
+  FulfillOrder
 )
 
 export const OrderCommand = OrderCommands.schema

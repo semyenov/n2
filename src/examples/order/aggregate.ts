@@ -112,7 +112,9 @@ export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
             cancelledAt: now
           })
         ]
-      })
+      }),
+    GetOrder: (_state, _command) => Effect.succeed([]),
+    FulfillOrder: (_state, _command) => Effect.succeed([])
   }
 })
 

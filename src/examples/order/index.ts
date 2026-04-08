@@ -9,12 +9,12 @@ import { OrderRpcRoute } from "./http.js"
 import { InfrastructureLayer } from "./layers.js"
 
 const ServerLayer = HttpLayerRouter.serve(OrderRpcRoute).pipe(
-  Layer.provide(BunHttpServer.layer({ port: 3000 })),
+  Layer.provide(BunHttpServer.layer({ port: 4000 })),
   Layer.provide(InfrastructureLayer)
 )
 
 const main = Effect.gen(function* () {
-  yield* Effect.log("Order service on port 3000")
+  yield* Effect.log("Order service on port 4000")
   yield* Effect.never
 }).pipe(Effect.provide(ServerLayer))
 

@@ -58,3 +58,7 @@ export {
 } from "./Definitions.js"
 
 export { rpcFromCommand } from "./EntityBuilder.js"
+
+export { makeHttpClient, makePromiseClient, type RpcPromiseClient } from "./Client.js"
+
+export { makeFetchClient } from "./FetchClient.js"

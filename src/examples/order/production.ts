@@ -29,12 +29,12 @@ const OrderProxyHandlers = EntityProxyServer.layerRpcHandlers(OrderEntity)
 const ApiRoute = RpcServer
   .layerHttpRouter({
     group: OrderProxyRpcs,
-    path: "/rpc/orders"
+    path: "/rpc/orders",
+    protocol: "http"
   })
   .pipe(
     Layer.provide(OrderProxyHandlers),
-    Layer.provide(RpcSerialization.layerJson),
-    Layer.provide(HttpLayerRouter.cors())
+    Layer.provide(RpcSerialization.layerJsonRpc())
   )
 
 const main = Effect.gen(function* () {

@@ -95,11 +95,10 @@ const makeRoute = <Rpcs extends Rpc.Any, R>(
   handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
 ) =>
   RpcServer
-    .layerHttpRouter({ group, path })
+    .layerHttpRouter({ group, path, protocol: "http" })
     .pipe(
       Layer.provide(handlers),
-      Layer.provide(RpcSerialization.layerJson),
-      Layer.provide(HttpLayerRouter.cors())
+      Layer.provide(RpcSerialization.layerJsonRpc())
     )
 
 /** Options for mapping execution results when wiring to a cluster Entity. */
