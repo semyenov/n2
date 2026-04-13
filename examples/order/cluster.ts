@@ -43,6 +43,7 @@ import { RpcSerialization, RpcServer } from "@effect/rpc"
 import { PgClient } from "@effect/sql-pg"
 import { OrderEntityLayer, OrderProxyRpcs, OrderProxyHandlers } from "./entity.js"
 import { ClusterInfrastructureLayer } from "./layers.js"
+import { MigrationsLayer } from "./migrate.js"
 
 // ---------------------------------------------------------------------------
 // API route — EntityProxy translates JSON-RPC → Sharding messages
@@ -108,7 +109,10 @@ const ShardingLayer = BunClusterHttp.layer({
 // at runtime: same reference used inside ShardingLayer, so one pool is built.
 const EntitiesLayer = Layer.provide(
   OrderEntityLayer,
-  Layer.provide(ClusterInfrastructureLayer, Layer.merge(SqlLayer, ShardingLayer))
+  Layer.provide(
+    Layer.merge(ClusterInfrastructureLayer, MigrationsLayer),
+    Layer.merge(SqlLayer, ShardingLayer)
+  )
 )
 
 // ---------------------------------------------------------------------------

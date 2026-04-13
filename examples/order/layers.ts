@@ -24,6 +24,7 @@ import { WorkflowEngine } from "@effect/workflow"
 import { OrderFulfillmentHandlers } from "./workflows.js"
 import { OrderProjectionLayer } from "./projector.js"
 import { OrderEventLogSchema } from "./events.js"
+import { OrderSnapshotsLive } from "./snapshots.js"
 
 // ---------------------------------------------------------------------------
 // Shared base services
@@ -83,10 +84,11 @@ const EventLogLayer = EventLogApi.layer(OrderEventLogSchema).pipe(
 // Dev mode: memory-based workflow engine, SQL event journal, EventLog, projections.
 // Requires SqlClient — callers must provide a PgClient layer.
 export const InfrastructureLayer = Layer.mergeAll(
-  sqlJournalLayer,  // R: SqlClient — provides EventJournal
-  identityLayer,    // R: never    — provides Identity
-  WorkflowLayer,    // R: never    — provides WorkflowEngine
-  EventLogLayer     // R: SqlClient — provides EventLog
+  sqlJournalLayer,    // R: SqlClient — provides EventJournal
+  identityLayer,      // R: never    — provides Identity
+  WorkflowLayer,      // R: never    — provides WorkflowEngine
+  EventLogLayer,      // R: SqlClient — provides EventLog
+  OrderSnapshotsLive  // R: SqlClient — provides OrderSnapshots
 )
 
 // Cluster mode: cluster-backed workflow engine, SQL event journal, EventLog, projections.
@@ -95,5 +97,6 @@ export const ClusterInfrastructureLayer = Layer.mergeAll(
   sqlJournalLayer,
   identityLayer,
   ClusterWorkflowLayer,
-  EventLogLayer
+  EventLogLayer,
+  OrderSnapshotsLive
 )

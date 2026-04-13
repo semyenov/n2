@@ -18,8 +18,8 @@ import { Rpc } from "@effect/rpc"
 
 export class LineItem extends Schema.Class<LineItem>("LineItem")({
   sku: Schema.String,
-  quantity: Schema.Number,
-  price: Schema.Number
+  quantity: Schema.Number.pipe(Schema.int(), Schema.positive()),
+  price: Schema.Number.pipe(Schema.positive())
 }) {}
 
 // ---------------------------------------------------------------------------
@@ -33,7 +33,12 @@ export class OrderCreated extends Schema.TaggedClass<OrderCreated>()(
 
 export class ItemAdded extends Schema.TaggedClass<ItemAdded>()(
   "ItemAdded",
-  { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number }
+  {
+    orderId: Schema.String,
+    sku: Schema.String,
+    quantity: Schema.Number.pipe(Schema.int(), Schema.positive()),
+    price: Schema.Number.pipe(Schema.positive())
+  }
 ) {}
 
 export class OrderSubmitted extends Schema.TaggedClass<OrderSubmitted>()(
@@ -118,7 +123,12 @@ export class AddItem extends Schema.TaggedRequest<AddItem>("AddItem")(
   "AddItem",
   {
     failure: OrderError, success: CommandResult,
-    payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number }
+    payload: {
+      orderId: Schema.String,
+      sku: Schema.String,
+      quantity: Schema.Number.pipe(Schema.int(), Schema.positive()),
+      price: Schema.Number.pipe(Schema.positive())
+    }
   }
 ) {}
 
@@ -170,7 +180,12 @@ export const OrderEntity = Entity.make("Order", [
     error: OrderError
   }),
   Rpc.make("AddItem", {
-    payload: { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number },
+    payload: {
+      orderId: Schema.String,
+      sku: Schema.String,
+      quantity: Schema.Number.pipe(Schema.int(), Schema.positive()),
+      price: Schema.Number.pipe(Schema.positive())
+    },
     primaryKey: (p) => p.orderId,
     success: CommandResult,
     error: OrderError

@@ -13,7 +13,10 @@
  */
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Metric from "effect/Metric"
+import * as Option from "effect/Option"
 import * as Ref from "effect/Ref"
+import * as Schedule from "effect/Schedule"
 import * as SynchronizedRef from "effect/SynchronizedRef"
 import { Entity, EntityProxy, EntityProxyServer } from "@effect/cluster"
 import * as EventLogApi from "@effect/experimental/EventLog"
@@ -21,6 +24,7 @@ import { InfrastructureLayer } from "./layers.js"
 import { handle, initialOrderState } from "./aggregate.js"
 import { OrderFulfillmentWorkflow } from "./workflows.js"
 import { OrderEventGroup, OrderEventLogSchema } from "./events.js"
+import { OrderSnapshots, SNAPSHOT_EVERY, type SnapshotEntry } from "./snapshots.js"
 import {
   type OrderEvent,
   OrderEntity,
@@ -55,11 +59,21 @@ import {
 
 export const OrderEntityLayer = OrderEntity.toLayer(
   Effect.gen(function* () {
-    const address = yield* Entity.CurrentAddress
-    const stateRef = yield* Ref.make(initialOrderState)
-    let revision = 0
+    const address  = yield* Entity.CurrentAddress
+    const snapshots = yield* OrderSnapshots
+
+    // Load snapshot on entity init — recover state without replaying every event.
+    // Falls back to initialOrderState if no snapshot exists or load fails.
+    const initial = yield* snapshots.load(address.entityId).pipe(
+      Effect.orElse(() => Effect.succeed(Option.none<SnapshotEntry>()))
+    )
+    const stateRef = yield* Ref.make(
+      Option.match(initial, { onNone: () => initialOrderState, onSome: ({ state }) => state })
+    )
+    let revision = Option.match(initial, { onNone: () => 0, onSome: ({ revision: r }) => r })
 
     // Helper: apply a command to the current state and persist the result.
+    // Saves a snapshot every SNAPSHOT_EVERY events (fire-and-forget).
     const dispatch = (command: CreateOrder | AddItem | SubmitOrder | CancelOrder) =>
       Effect.gen(function* () {
         const state = yield* Ref.get(stateRef)
@@ -70,6 +84,12 @@ export const OrderEntityLayer = OrderEntity.toLayer(
         )
         yield* Ref.set(stateRef, result.state)
         revision += result.events.length
+        if (revision % SNAPSHOT_EVERY === 0) {
+          yield* snapshots.save(address.entityId, result.state, revision).pipe(
+            Effect.tapError((e) => Effect.logWarning(`[entity] snapshot save failed: ${String(e)}`)),
+            Effect.ignore
+          )
+        }
         return new CommandResult({ orderId: address.entityId, revision })
       })
 
@@ -138,9 +158,31 @@ export const OrderProxyHandlers = EntityProxyServer.layerRpcHandlers(OrderEntity
 
 type OrderEntry = { readonly state: OrderState; readonly revision: number }
 
-const OrderHandlersRaw = OrderRpcs.toLayer(
+// ---------------------------------------------------------------------------
+// Metrics — zero-context global values (R = never), created once at module load.
+// Identified by name + tags; Effect deduplicates by name+tags in the registry.
+// ---------------------------------------------------------------------------
+
+const commandTotal   = Metric.counter("order.commands.total",   { incremental: true })
+const commandErrors  = Metric.counter("order.commands.errors",  { incremental: true })
+const commandLatency = Metric.timer("order.command.duration_ms", "milliseconds")
+
+// ---------------------------------------------------------------------------
+// Retry schedule for event publishing — exponential backoff with jitter.
+// Retries up to 3 extra attempts (4 total) before giving up.
+// ---------------------------------------------------------------------------
+
+// exponential backoff with jitter, capped at 3 extra attempts (4 total).
+// intersect stops when EITHER schedule stops — recurs(3) caps after 3 iterations.
+const publishRetry = Schedule.exponential("100 millis").pipe(
+  Schedule.jittered,
+  Schedule.intersect(Schedule.recurs(3))
+)
+
+export const OrderHandlersRaw = OrderRpcs.toLayer(
   Effect.gen(function* () {
-    const store   = yield* SynchronizedRef.make(new Map<string, OrderEntry>())
+    const store     = yield* SynchronizedRef.make(new Map<string, OrderEntry>())
+    const snapshots = yield* OrderSnapshots
 
     // Obtain the publish function once at layer-build time.
     // makeClient requires EventLog in context (provided by InfrastructureLayer below).
@@ -161,28 +203,62 @@ const OrderHandlersRaw = OrderRpcs.toLayer(
       }
     }
 
-    // Apply a command, update state, then publish resulting events outside the lock.
-    // SynchronizedRef.modifyEffect returns [CommandResult, events]; the lock is
-    // released before the publish I/O starts.
-    const runCommand = (orderId: string, command: CreateOrder | AddItem | SubmitOrder | CancelOrder) =>
-      Effect.gen(function* () {
-        const [result, events] = yield* SynchronizedRef.modifyEffect(store, (map) => {
-          const { state, revision } = map.get(orderId) ?? { state: initialOrderState, revision: 0 }
-          return handle(state, command).pipe(
-            Effect.mapError((e) =>
-              e instanceof OrderError ? e : new OrderError({ message: String(e) })
-            ),
-            Effect.map(({ events, state: next }) => {
-              const nextRevision = revision + events.length
-              const nextMap = new Map(map).set(orderId, { state: next, revision: nextRevision })
-              return [[new CommandResult({ orderId, revision: nextRevision }), events] as const, nextMap] as const
-            })
+    // Get entry from map or fall back to snapshot (then initialOrderState).
+    // Called inside SynchronizedRef.modifyEffect so results flow into the atomic update.
+    const getOrLoad = (map: Map<string, OrderEntry>, orderId: string): Effect.Effect<OrderEntry> =>
+      map.has(orderId)
+        ? Effect.succeed(map.get(orderId)!)
+        : snapshots.load(orderId).pipe(
+            Effect.map(Option.getOrElse(() => ({ state: initialOrderState, revision: 0 }))),
+            Effect.orElse(() => Effect.succeed({ state: initialOrderState, revision: 0 }))
           )
-        })
-        // Publish events fire-and-forget: journal errors don't fail the command.
-        yield* Effect.forEach(events, publishEvent, { discard: true }).pipe(Effect.ignore)
+
+    // Apply a command, update state, then publish resulting events outside the lock.
+    // SynchronizedRef.modifyEffect holds the lock only for the state mutation;
+    // event publishing and snapshot saving happen after it is released.
+    //
+    // Metrics: commandLatency (histogram), commandTotal / commandErrors (counters).
+    // Publish retry: up to 3 extra attempts with exponential+jittered backoff.
+    const runCommand = (orderId: string, command: CreateOrder | AddItem | SubmitOrder | CancelOrder) => {
+      const tag = command._tag
+      return Effect.gen(function* () {
+        const [result, events, nextState] = yield* SynchronizedRef.modifyEffect(store, (map) =>
+          getOrLoad(map, orderId).pipe(
+            Effect.flatMap(({ state, revision }) =>
+              handle(state, command).pipe(
+                Effect.mapError((e) =>
+                  e instanceof OrderError ? e : new OrderError({ message: String(e) })
+                ),
+                Effect.map(({ events, state: next }) => {
+                  const nextRevision = revision + events.length
+                  const nextMap = new Map(map).set(orderId, { state: next, revision: nextRevision })
+                  return [
+                    [new CommandResult({ orderId, revision: nextRevision }), events, next] as const,
+                    nextMap
+                  ] as const
+                })
+              )
+            )
+          )
+        )
+        yield* Effect.forEach(events, publishEvent, { discard: true }).pipe(
+          Effect.retry(publishRetry),
+          Effect.tapError((e) => Effect.logError(`[entity] event publish failed: ${String(e)}`)),
+          Effect.ignore
+        )
+        if (result.revision % SNAPSHOT_EVERY === 0) {
+          yield* snapshots.save(orderId, nextState, result.revision).pipe(
+            Effect.tapError((e) => Effect.logWarning(`[entity] snapshot save failed: ${String(e)}`)),
+            Effect.ignore
+          )
+        }
         return result
-      })
+      }).pipe(
+        Metric.trackDuration(Metric.tagged(commandLatency, "command", tag)),
+        Effect.tap(() => Metric.increment(Metric.tagged(commandTotal, "command", tag))),
+        Effect.tapError(() => Metric.increment(Metric.tagged(commandErrors, "command", tag)))
+      )
+    }
 
     return OrderRpcs.of({
       CreateOrder: (p) => runCommand(p.orderId, new CreateOrder(p)),
@@ -206,14 +282,30 @@ const OrderHandlersRaw = OrderRpcs.toLayer(
           return result
         }),
 
-      // GetOrder: read from the map without modifying it.
+      // GetOrder: read from map; if not in memory, try snapshot (hydrates map for future reads).
       GetOrder: (p) =>
         SynchronizedRef.modifyEffect(store, (map) => {
-          const entry = map.get(p.orderId)
-          if (!entry || entry.state.status === "empty") {
-            return Effect.fail(new OrderNotFound({ orderId: p.orderId }))
+          if (map.has(p.orderId)) {
+            const entry = map.get(p.orderId)!
+            if (entry.state.status === "empty") {
+              return Effect.fail(new OrderNotFound({ orderId: p.orderId }))
+            }
+            return Effect.succeed([entry.state, map] as const)
           }
-          return Effect.succeed([entry.state, map] as const)
+          // Not in memory — check snapshot to recover state after server restart.
+          return snapshots.load(p.orderId).pipe(
+            Effect.orElse(() => Effect.succeed(Option.none<SnapshotEntry>())),
+            Effect.flatMap(Option.match({
+              onNone: () => Effect.fail(new OrderNotFound({ orderId: p.orderId })),
+              onSome: ({ state, revision }) => {
+                if (state.status === "empty") {
+                  return Effect.fail(new OrderNotFound({ orderId: p.orderId }))
+                }
+                const updatedMap = new Map(map).set(p.orderId, { state, revision })
+                return Effect.succeed([state, updatedMap] as const)
+              }
+            }))
+          )
         })
     })
   })

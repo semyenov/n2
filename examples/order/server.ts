@@ -23,6 +23,7 @@ import { PgClient } from "@effect/sql-pg"
 import { OrderRpcs } from "./contracts.js"
 import { OrderHandlers } from "./entity.js"
 import { InfrastructureLayer } from "./layers.js"
+import { MigrationsLayer } from "./migrate.js"
 
 const SqlLayer = PgClient.layerConfig(
   Config.map(Config.redacted("DATABASE_URL"), (url) => ({ url }))
@@ -50,6 +51,7 @@ const ServerLayer = HttpLayerRouter.serve(
       (port) => ({ port })
     )
   )),
+  Layer.provide(MigrationsLayer),
   Layer.provide(InfrastructureLayer),
   Layer.provide(SqlLayer)
 )

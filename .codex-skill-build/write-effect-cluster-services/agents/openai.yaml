@@ -1,0 +1,4 @@
+interface:
+  display_name: "Write Effect Cluster Services"
+  short_description: "Scaffold repo-style Effect cluster services"
+  default_prompt: "Use $write-effect-cluster-services to create or update an @effect/cluster service in this repo."
