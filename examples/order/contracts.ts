@@ -41,8 +41,13 @@ export class OrderSubmitted extends Schema.TaggedClass<OrderSubmitted>()(
   { orderId: Schema.String, submittedAt: Schema.DateTimeUtc }
 ) {}
 
+export class OrderCancelled extends Schema.TaggedClass<OrderCancelled>()(
+  "OrderCancelled",
+  { orderId: Schema.String, reason: Schema.String, cancelledAt: Schema.DateTimeUtc }
+) {}
+
 // Union used in aggregate signatures and state machine typing.
-export const OrderEvent = Schema.Union(OrderCreated, ItemAdded, OrderSubmitted)
+export const OrderEvent = Schema.Union(OrderCreated, ItemAdded, OrderSubmitted, OrderCancelled)
 export type OrderEvent = typeof OrderEvent.Type
 
 // ---------------------------------------------------------------------------
@@ -54,11 +59,16 @@ export class OrderError extends Schema.TaggedError<OrderError>()(
   { message: Schema.String }
 ) {}
 
+export class OrderNotFound extends Schema.TaggedError<OrderNotFound>()(
+  "OrderNotFound",
+  { orderId: Schema.String }
+) {}
+
 // ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 
-export const OrderStatus = Schema.Literal("empty", "draft", "submitted")
+export const OrderStatus = Schema.Literal("empty", "draft", "submitted", "cancelled")
 export type OrderStatus = typeof OrderStatus.Type
 
 export class OrderState extends Schema.Class<OrderState>("OrderState")({
@@ -66,7 +76,8 @@ export class OrderState extends Schema.Class<OrderState>("OrderState")({
   orderId: Schema.OptionFromSelf(Schema.String),
   customerId: Schema.OptionFromSelf(Schema.String),
   items: Schema.Array(LineItem),
-  totalAmount: Schema.Number
+  totalAmount: Schema.Number,
+  cancelledAt: Schema.OptionFromSelf(Schema.DateTimeUtc)
 }) {}
 
 export const initialOrderState = new OrderState({
@@ -74,7 +85,8 @@ export const initialOrderState = new OrderState({
   orderId: Option.none(),
   customerId: Option.none(),
   items: [],
-  totalAmount: 0
+  totalAmount: 0,
+  cancelledAt: Option.none()
 })
 
 // ---------------------------------------------------------------------------
@@ -118,8 +130,24 @@ export class SubmitOrder extends Schema.TaggedRequest<SubmitOrder>("SubmitOrder"
   }
 ) {}
 
+export class CancelOrder extends Schema.TaggedRequest<CancelOrder>("CancelOrder")(
+  "CancelOrder",
+  {
+    failure: OrderError, success: CommandResult,
+    payload: { orderId: Schema.String, reason: Schema.String }
+  }
+) {}
+
+export class GetOrder extends Schema.TaggedRequest<GetOrder>("GetOrder")(
+  "GetOrder",
+  {
+    failure: OrderNotFound, success: OrderState,
+    payload: { orderId: Schema.String }
+  }
+) {}
+
 // Union used in aggregate `decide` signature.
-export const OrderCommandSchema = Schema.Union(CreateOrder, AddItem, SubmitOrder)
+export const OrderCommandSchema = Schema.Union(CreateOrder, AddItem, SubmitOrder, CancelOrder, GetOrder)
 export type OrderCommand = typeof OrderCommandSchema.Type
 
 // ---------------------------------------------------------------------------
@@ -130,6 +158,8 @@ export type OrderCommand = typeof OrderCommandSchema.Type
 // success schema, and error schema.
 // annotateRpcs(ClusterSchema.Persisted, true) enables event-sourced persistence
 // via EventJournal — state survives restarts.
+// GetOrder is excluded from Persisted annotation: it is a read-only query
+// that produces no events and requires no journal writes.
 // ---------------------------------------------------------------------------
 
 export const OrderEntity = Entity.make("Order", [
@@ -150,8 +180,23 @@ export const OrderEntity = Entity.make("Order", [
     primaryKey: (p) => p.orderId,
     success: CommandResult,
     error: OrderError
+  }),
+  Rpc.make("CancelOrder", {
+    payload: { orderId: Schema.String, reason: Schema.String },
+    primaryKey: (p) => p.orderId,
+    success: CommandResult,
+    error: OrderError
+  }),
+  Rpc.make("GetOrder", {
+    payload: { orderId: Schema.String },
+    primaryKey: (p) => p.orderId,
+    success: OrderState,
+    error: OrderNotFound
   })
-]).annotateRpcs(ClusterSchema.Persisted, true)
+]).annotateRpcs(
+  ClusterSchema.Persisted,
+  true
+)
 
 // The RpcGroup derived from the entity — used to build HTTP routes and handlers.
 export const OrderRpcs = OrderEntity.protocol

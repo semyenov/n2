@@ -14,18 +14,26 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Ref from "effect/Ref"
+import * as SynchronizedRef from "effect/SynchronizedRef"
 import { Entity, EntityProxy, EntityProxyServer } from "@effect/cluster"
-import { WorkflowLayer } from "./layers.js"
+import * as EventLogApi from "@effect/experimental/EventLog"
+import { InfrastructureLayer } from "./layers.js"
 import { handle, initialOrderState } from "./aggregate.js"
+import { OrderFulfillmentWorkflow } from "./workflows.js"
+import { OrderEventGroup, OrderEventLogSchema } from "./events.js"
 import {
+  type OrderEvent,
   OrderEntity,
   OrderRpcs,
   CommandResult,
   OrderError,
+  OrderNotFound,
   OrderState,
   CreateOrder,
   AddItem,
-  SubmitOrder
+  SubmitOrder,
+  CancelOrder,
+  GetOrder
 } from "./contracts.js"
 
 // ---------------------------------------------------------------------------
@@ -52,7 +60,7 @@ export const OrderEntityLayer = OrderEntity.toLayer(
     let revision = 0
 
     // Helper: apply a command to the current state and persist the result.
-    const dispatch = (command: CreateOrder | AddItem | SubmitOrder) =>
+    const dispatch = (command: CreateOrder | AddItem | SubmitOrder | CancelOrder) =>
       Effect.gen(function* () {
         const state = yield* Ref.get(stateRef)
         const result = yield* handle(state, command).pipe(
@@ -68,10 +76,40 @@ export const OrderEntityLayer = OrderEntity.toLayer(
     return OrderEntity.of({
       CreateOrder: (req) => dispatch(new CreateOrder(req.payload)),
       AddItem:     (req) => dispatch(new AddItem(req.payload)),
-      SubmitOrder: (req) => dispatch(new SubmitOrder(req.payload))
+      CancelOrder: (req) => dispatch(new CancelOrder(req.payload)),
+
+      // SubmitOrder: dispatch the command, then fire the fulfillment workflow.
+      // discard: true — don't block the RPC response waiting for the workflow.
+      // idempotencyKey is orderId so a duplicate SubmitOrder joins the running workflow.
+      SubmitOrder: (req) =>
+        Effect.gen(function* () {
+          const result = yield* dispatch(new SubmitOrder(req.payload))
+          const state = yield* Ref.get(stateRef)
+          const firstItem = state.items[0]
+          if (firstItem !== undefined) {
+            yield* OrderFulfillmentWorkflow.execute(
+              { orderId: req.payload.orderId, sku: firstItem.sku, quantity: firstItem.quantity },
+              { discard: true }
+            )
+          }
+          return result
+        }),
+
+      // GetOrder: read-only — no events, no journal write.
+      GetOrder: (_req) =>
+        Effect.gen(function* () {
+          const state = yield* Ref.get(stateRef)
+          if (state.status === "empty") {
+            return yield* new OrderNotFound({ orderId: address.entityId })
+          }
+          return state
+        })
     })
   }),
-  { maxIdleTime: "10 minutes", concurrency: "unbounded" }
+  {
+    maxIdleTime: "10 minutes",
+    concurrency: "unbounded"
+  }
 )
 
 // ---------------------------------------------------------------------------
@@ -88,42 +126,99 @@ export const OrderProxyHandlers = EntityProxyServer.layerRpcHandlers(OrderEntity
 // ---------------------------------------------------------------------------
 // In-memory handlers (dev mode)
 //
-// runCommand: reads current state → calls handle → writes back.
-// Each command sees the state left by prior commands on the same orderId.
+// State is stored in a SynchronizedRef<Map> created inside the Layer.
+// This keeps state scoped to the layer's lifetime (no global mutable data)
+// and ensures atomic read-then-update per orderId: SynchronizedRef.modifyEffect
+// holds the ref's lock for the duration of the Effect, so concurrent commands
+// on the same orderId are serialised automatically.
 //
-// OrderRpcs.of({ ... }) is typed by the RpcGroup derived from OrderEntity —
-// TypeScript enforces that every Rpc tag has a handler.
-//
-// To trigger a workflow from a handler:
-//   OrderFulfillmentWorkflow.execute({ orderId, sku, quantity }).pipe(Effect.scoped)
+// OrderRpcs.toLayer accepts an Effect<Handlers> — the SynchronizedRef is
+// allocated once when the layer builds, then shared across all handlers.
 // ---------------------------------------------------------------------------
 
-const stateMap    = new Map<string, OrderState>()
-const revisionMap = new Map<string, number>()
-
-const runCommand = (orderId: string, command: CreateOrder | AddItem | SubmitOrder) =>
-  handle(stateMap.get(orderId) ?? initialOrderState, command).pipe(
-    Effect.map(({ events, state }) => {
-      stateMap.set(orderId, state)
-      const revision = (revisionMap.get(orderId) ?? 0) + events.length
-      revisionMap.set(orderId, revision)
-      return new CommandResult({ orderId, revision })
-    }),
-    Effect.mapError((e) =>
-      e instanceof OrderError ? e : new OrderError({ message: String(e) })
-    )
-  )
+type OrderEntry = { readonly state: OrderState; readonly revision: number }
 
 const OrderHandlersRaw = OrderRpcs.toLayer(
-  OrderRpcs.of({
-    CreateOrder: (p) => runCommand(p.orderId, new CreateOrder(p)),
-    AddItem:     (p) => runCommand(p.orderId, new AddItem(p)),
-    SubmitOrder: (p) => runCommand(p.orderId, new SubmitOrder(p))
+  Effect.gen(function* () {
+    const store   = yield* SynchronizedRef.make(new Map<string, OrderEntry>())
+
+    // Obtain the publish function once at layer-build time.
+    // makeClient requires EventLog in context (provided by InfrastructureLayer below).
+    // The returned publish fn has R = never — EventLog is consumed at acquire time.
+    const publish = yield* EventLogApi.makeClient(OrderEventLogSchema)
+
+    // Map a domain event to an EventLog publish call.
+    const publishEvent = (event: OrderEvent) => {
+      switch (event._tag) {
+        case "OrderCreated":
+          return publish("OrderCreated",   { orderId: event.orderId, customerId: event.customerId, createdAt: event.createdAt })
+        case "ItemAdded":
+          return publish("ItemAdded",      { orderId: event.orderId, sku: event.sku, quantity: event.quantity, price: event.price })
+        case "OrderSubmitted":
+          return publish("OrderSubmitted", { orderId: event.orderId, submittedAt: event.submittedAt })
+        case "OrderCancelled":
+          return publish("OrderCancelled", { orderId: event.orderId, reason: event.reason, cancelledAt: event.cancelledAt })
+      }
+    }
+
+    // Apply a command, update state, then publish resulting events outside the lock.
+    // SynchronizedRef.modifyEffect returns [CommandResult, events]; the lock is
+    // released before the publish I/O starts.
+    const runCommand = (orderId: string, command: CreateOrder | AddItem | SubmitOrder | CancelOrder) =>
+      Effect.gen(function* () {
+        const [result, events] = yield* SynchronizedRef.modifyEffect(store, (map) => {
+          const { state, revision } = map.get(orderId) ?? { state: initialOrderState, revision: 0 }
+          return handle(state, command).pipe(
+            Effect.mapError((e) =>
+              e instanceof OrderError ? e : new OrderError({ message: String(e) })
+            ),
+            Effect.map(({ events, state: next }) => {
+              const nextRevision = revision + events.length
+              const nextMap = new Map(map).set(orderId, { state: next, revision: nextRevision })
+              return [[new CommandResult({ orderId, revision: nextRevision }), events] as const, nextMap] as const
+            })
+          )
+        })
+        // Publish events fire-and-forget: journal errors don't fail the command.
+        yield* Effect.forEach(events, publishEvent, { discard: true }).pipe(Effect.ignore)
+        return result
+      })
+
+    return OrderRpcs.of({
+      CreateOrder: (p) => runCommand(p.orderId, new CreateOrder(p)),
+      AddItem:     (p) => runCommand(p.orderId, new AddItem(p)),
+      CancelOrder: (p) => runCommand(p.orderId, new CancelOrder(p)),
+
+      // SubmitOrder: dispatch, publish events, then fire the fulfillment workflow.
+      SubmitOrder: (p) =>
+        Effect.gen(function* () {
+          const result = yield* runCommand(p.orderId, new SubmitOrder(p))
+          const entry = yield* SynchronizedRef.get(store).pipe(
+            Effect.map((map) => map.get(p.orderId))
+          )
+          const firstItem = entry?.state.items[0]
+          if (firstItem !== undefined) {
+            yield* OrderFulfillmentWorkflow.execute(
+              { orderId: p.orderId, sku: firstItem.sku, quantity: firstItem.quantity },
+              { discard: true }
+            )
+          }
+          return result
+        }),
+
+      // GetOrder: read from the map without modifying it.
+      GetOrder: (p) =>
+        SynchronizedRef.modifyEffect(store, (map) => {
+          const entry = map.get(p.orderId)
+          if (!entry || entry.state.status === "empty") {
+            return Effect.fail(new OrderNotFound({ orderId: p.orderId }))
+          }
+          return Effect.succeed([entry.state, map] as const)
+        })
+    })
   })
 )
 
-// WorkflowLayer provided here so OrderHandlers has R = never,
-// making it composable into any server layer without extra wiring.
-// Effect deduplicates WorkflowLayer — it is built once even though
-// entity.ts and layers.ts both reference it.
-export const OrderHandlers = Layer.provide(OrderHandlersRaw, WorkflowLayer)
+// InfrastructureLayer provides EventLog (required by makeClient above) plus
+// WorkflowEngine. OrderHandlers has R = SqlClient — server.ts provides SqlLayer.
+export const OrderHandlers = Layer.provide(OrderHandlersRaw, InfrastructureLayer)

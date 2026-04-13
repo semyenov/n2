@@ -10,6 +10,11 @@
  *
  * Compensation runs automatically if any step after it fails.
  * Activities are idempotent — safe to replay on retry.
+ *
+ * NOTE: The activity implementations below are stubs — they log and return
+ * hardcoded results. In production each activity body should call the real
+ * downstream service (inventory entity, payment gateway, shipping API).
+ * Replace the Effect.log + return blocks with your domain logic.
  */
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
@@ -120,7 +125,10 @@ export const OrderFulfillmentHandlers = OrderFulfillmentWorkflow.toLayer(
       // Step 3: Durable sleep
       // The workflow fiber suspends and releases its thread.
       // After the duration, it resumes — even if the process restarted.
-      yield* DurableClock.sleep({ name: "pre-shipping-delay", duration: "5 seconds" })
+      yield* DurableClock.sleep({
+        name: "pre-shipping-delay",
+        duration: "5 seconds"
+      })
 
       // Step 4: Point of no return — no compensation registered
       yield* ScheduleShipping

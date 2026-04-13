@@ -18,6 +18,7 @@ import {
   OrderCreated,
   ItemAdded,
   OrderSubmitted,
+  OrderCancelled,
   LineItem,
   OrderError
 } from "./contracts.js"
@@ -51,6 +52,8 @@ export const evolve = (state: OrderState, event: OrderEvent): OrderState => {
       }
     case "OrderSubmitted":
       return { ...state, status: "submitted" as const }
+    case "OrderCancelled":
+      return { ...state, status: "cancelled" as const, cancelledAt: Option.some(event.cancelledAt) }
   }
 }
 
@@ -59,6 +62,7 @@ export const evolve = (state: OrderState, event: OrderEvent): OrderState => {
 //
 // Returns the events that the command produces, or fails with OrderError.
 // No infrastructure — DateTime is the only effect used here.
+// GetOrder is a read — it never reaches decide; the entity layer handles it directly.
 // ---------------------------------------------------------------------------
 
 export const decide = (
@@ -94,6 +98,23 @@ export const decide = (
         const now = yield* DateTime.now
         return [new OrderSubmitted({ orderId: command.orderId, submittedAt: now })]
       })
+
+    case "CancelOrder":
+      return Effect.gen(function* () {
+        if (state.status === "empty") {
+          return yield* new OrderError({ message: "Order does not exist" })
+        }
+        if (state.status === "cancelled") {
+          return yield* new OrderError({ message: "Order is already cancelled" })
+        }
+        const now = yield* DateTime.now
+        return [new OrderCancelled({ orderId: command.orderId, reason: command.reason, cancelledAt: now })]
+      })
+
+    case "GetOrder":
+      // GetOrder is a read — it never reaches decide.
+      // The entity layer reads directly from stateRef / the in-memory map.
+      return Effect.succeed([])
   }
 }
 
