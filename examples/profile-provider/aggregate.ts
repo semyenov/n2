@@ -75,6 +75,17 @@ const branchExists = (state: ProfileState, branchId: string) =>
 const snapshotExists = (state: ProfileState, snapshotId: string) =>
   state.snapshots.some((snapshot) => snapshot.snapshotId === snapshotId)
 
+const ensureProfileIdMatches = (
+  profileId: string,
+  candidateProfileId: string,
+  fieldName: "maskedProfileJson" | "profileJson"
+) =>
+  candidateProfileId === profileId
+    ? Effect.void
+    : new ProfileError({
+        message: `${fieldName}.uuid must match profileId "${profileId}"`
+      })
+
 const mergeSourceAssets = (current: ProfileState["sourceAssets"], incoming: ProfileState["sourceAssets"]) => {
   const next = new Map(current.map((asset) => [asset.sourceId, asset]))
   for (const asset of incoming) {
@@ -317,6 +328,7 @@ export const decide = (
         if (state.status !== "empty") {
           return yield* new ProfileError({ message: "Profile already exists" })
         }
+        yield* ensureProfileIdMatches(command.profileId, command.maskedProfileJson.uuid, "maskedProfileJson")
         const now = yield* DateTime.now
         const events: Array<ProfileEvent> = [
           new ProfileCreated({
@@ -367,6 +379,7 @@ export const decide = (
         if (!branchExists(state, command.branchId)) {
           return yield* new ProfileError({ message: `Unknown branch "${command.branchId}"` })
         }
+        yield* ensureProfileIdMatches(command.profileId, command.maskedProfileJson.uuid, "maskedProfileJson")
         const now = yield* DateTime.now
         const events: Array<ProfileEvent> = [
           new MergedDataProfile({
@@ -464,6 +477,7 @@ export const decide = (
         if (snapshotExists(state, command.snapshotId)) {
           return yield* new ProfileError({ message: `Snapshot "${command.snapshotId}" already exists` })
         }
+        yield* ensureProfileIdMatches(command.profileId, command.profileJson.uuid, "profileJson")
         const now = yield* DateTime.now
         const events: Array<ProfileEvent> = [
           new SnapshotCreatedProfile({

@@ -5,18 +5,12 @@
  *
  *   1. Pure aggregate  — handle/evolve/decide with no infrastructure.
  *   2. Handler layer   — RpcTest.makeClient wired to in-memory services.
- *
- * No PostgreSQL required: EventJournal.layerMemory and an in-memory Map
- * for snapshots replace all SQL dependencies.
- *
- * RpcTest.makeClient(group) creates a direct-call client: it bypasses HTTP and
- * calls handler functions from the Layer in-process. Requires Scope (from
- * Effect.scoped) + Rpc.ToHandler<Rpcs> (from handlersLayer).
  */
 import { test, expect } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
+import * as Schema from "effect/Schema"
 import * as ExpEventJournal from "@effect/experimental/EventJournal"
 import { EventLog as EL } from "@effect/experimental"
 import { Identity } from "@effect/experimental/EventLog"
@@ -30,6 +24,7 @@ import {
   GetProfile,
   GetProfileHistory,
   MergeProfileData,
+  ProfileDocument,
   ProfileError,
   ProfileNotFound,
   ProfileProviderRpcs,
@@ -40,6 +35,48 @@ import {
 import { ProfileProviderEventGroup, ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderHandlersRaw } from "./entity.js"
 import { ProfileProviderSnapshots, type SnapshotEntry } from "./snapshots.js"
+
+const makeProfileId = (seed: number) =>
+  `00000000-0000-4000-8000-${seed.toString().padStart(12, "0")}`
+
+const decodeProfile = Schema.decodeUnknownSync(ProfileDocument)
+
+const makeProfile = (profileId: string, relevantPosition = "Actor") =>
+  decodeProfile({
+    uuid: profileId,
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-02T00:00:00.000Z",
+    user_data: {
+      personal_info: {
+        first_name: "Ada",
+        last_name: "Lovelace",
+        relevant_position: relevantPosition,
+        relocation: true
+      },
+      salary_expectations: {
+        currency: "USD",
+        amount_from: 1000
+      },
+      skills: [
+        {
+          name: "TypeScript",
+          level: "advanced",
+          years_of_experience: 5
+        }
+      ],
+      education: [
+        {
+          degree: "Bachelor",
+          field_of_study: "Computer Science",
+          institution: "Analytical Engine Institute"
+        }
+      ]
+    },
+    user_meta_data: {
+      version: 1,
+      source_platform: "resume-import"
+    }
+  })
 
 const sampleSource = new SourceAsset({
   sourceId: "src-1",
@@ -106,12 +143,13 @@ const runWith = <A>(
   )
 
 test("CreateProfile initializes draft state and metadata revisions", async () => {
+  const profileId = makeProfileId(1)
   const { state, events } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "profile-1",
+    profileId,
     ownerAgentId: "agent-1",
     branchId: "main",
     schemaVersion: "1.0.0",
-    maskedProfileJson: "{\"headline\":\"Actor\"}",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
     metadataJson: "{\"channel\":\"resume\"}",
     piiStorageKey: "pii/profile-1",
     piiJson: "{\"email\":\"hidden\"}",
@@ -122,7 +160,8 @@ test("CreateProfile initializes draft state and metadata revisions", async () =>
   })))
 
   expect(state.status).toBe("draft")
-  expect(state.profileId).toBe("profile-1")
+  expect(state.profileId).toBe(profileId)
+  expect(state.maskedProfileJson?.uuid).toBe(profileId)
   expect(state.sourceAssets.length).toBe(1)
   expect(state.revision).toBe(3)
   expect(events.map((event) => event._tag)).toEqual([
@@ -133,12 +172,13 @@ test("CreateProfile initializes draft state and metadata revisions", async () =>
 })
 
 test("MergeProfileData fails on unknown branch", async () => {
+  const profileId = makeProfileId(2)
   const { state } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "profile-2",
+    profileId,
     ownerAgentId: "agent-1",
     branchId: "main",
     schemaVersion: "1.0.0",
-    maskedProfileJson: "{}",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
     metadataJson: "{}",
     piiStorageKey: "",
     piiJson: "",
@@ -149,10 +189,10 @@ test("MergeProfileData fails on unknown branch", async () => {
   })))
 
   const error = await run(handle(state, new MergeProfileData({
-    profileId: "profile-2",
+    profileId,
     branchId: "alt",
     schemaVersion: "1.0.1",
-    maskedProfileJson: "{\"headline\":\"Singer\"}",
+    maskedProfileJson: makeProfile(profileId, "Singer"),
     metadataJson: "{\"channel\":\"chat\"}",
     piiStorageKey: "",
     piiJson: "",
@@ -166,12 +206,13 @@ test("MergeProfileData fails on unknown branch", async () => {
 })
 
 test("ForkProfileBranch then CreateProfileSnapshot records history", async () => {
+  const profileId = makeProfileId(3)
   const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "profile-3",
+    profileId,
     ownerAgentId: "agent-1",
     branchId: "main",
     schemaVersion: "1.0.0",
-    maskedProfileJson: "{\"headline\":\"Performer\"}",
+    maskedProfileJson: makeProfile(profileId, "Performer"),
     metadataJson: "{}",
     piiStorageKey: "",
     piiJson: "",
@@ -181,7 +222,7 @@ test("ForkProfileBranch then CreateProfileSnapshot records history", async () =>
     sources: [sampleSource]
   })))
   const { state: s2 } = await run(handle(s1, new ForkProfileBranch({
-    profileId: "profile-3",
+    profileId,
     branchId: "casting",
     label: "Casting angle",
     baseBranchId: "main",
@@ -193,12 +234,12 @@ test("ForkProfileBranch then CreateProfileSnapshot records history", async () =>
     summary: "Branch from main"
   })))
   const { state: s3 } = await run(handle(s2, new CreateProfileSnapshot({
-    profileId: "profile-3",
+    profileId,
     branchId: "casting",
     snapshotId: "snap-1",
     snapshotType: "LLM",
     schemaVersion: "1.0.1",
-    profileJson: "{\"headline\":\"Commercial talent\"}",
+    profileJson: makeProfile(profileId, "Commercial talent"),
     metadataJson: "{\"model\":\"gpt\"}",
     piiStorageKey: "",
     piiJson: "",
@@ -210,18 +251,21 @@ test("ForkProfileBranch then CreateProfileSnapshot records history", async () =>
   expect(s3.branches.length).toBe(2)
   expect(s3.snapshots.length).toBe(1)
   expect(s3.snapshots[0]?.snapshotId).toBe("snap-1")
+  expect(s3.snapshots[0]?.profileJson.user_data.personal_info.relevant_position).toBe("Commercial talent")
 })
 
 test("handlers: create, merge, snapshot, publish, history", async () => {
   const { handlersLayer } = makeTestLayers()
+  const profileId = makeProfileId(4)
+
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
     yield* client.CreateProfile({
-      profileId: "profile-h1",
+      profileId,
       ownerAgentId: "agent-1",
       branchId: "main",
       schemaVersion: "1.0.0",
-      maskedProfileJson: "{\"headline\":\"Actor\"}",
+      maskedProfileJson: makeProfile(profileId, "Actor"),
       metadataJson: "{\"channel\":\"resume\"}",
       piiStorageKey: "",
       piiJson: "",
@@ -231,10 +275,10 @@ test("handlers: create, merge, snapshot, publish, history", async () => {
       sources: [sampleSource]
     })
     yield* client.MergeProfileData({
-      profileId: "profile-h1",
+      profileId,
       branchId: "main",
       schemaVersion: "1.0.1",
-      maskedProfileJson: "{\"headline\":\"Actor Singer\"}",
+      maskedProfileJson: makeProfile(profileId, "Actor Singer"),
       metadataJson: "{\"channel\":\"chat\"}",
       piiStorageKey: "",
       piiJson: "",
@@ -244,12 +288,12 @@ test("handlers: create, merge, snapshot, publish, history", async () => {
       sources: []
     })
     yield* client.CreateProfileSnapshot({
-      profileId: "profile-h1",
+      profileId,
       branchId: "main",
       snapshotId: "snap-h1",
       snapshotType: "MANUAL",
       schemaVersion: "1.0.1",
-      profileJson: "{\"headline\":\"Actor Singer\"}",
+      profileJson: makeProfile(profileId, "Actor Singer"),
       metadataJson: "{\"reviewed\":true}",
       piiStorageKey: "",
       piiJson: "",
@@ -258,7 +302,7 @@ test("handlers: create, merge, snapshot, publish, history", async () => {
       summary: "Manual draft"
     })
     yield* client.PublishProfileSnapshot({
-      profileId: "profile-h1",
+      profileId,
       snapshotId: "snap-h1",
       strategyJson: "{\"segment\":\"commercial\"}",
       metadataJson: "{\"action\":\"publish\"}",
@@ -266,8 +310,8 @@ test("handlers: create, merge, snapshot, publish, history", async () => {
       actorId: "agent-1"
     })
 
-    const history = yield* client.GetProfileHistory({ profileId: "profile-h1" })
-    expect(history.profileId).toBe("profile-h1")
+    const history = yield* client.GetProfileHistory({ profileId })
+    expect(history.profileId).toBe(profileId)
     expect(history.snapshots.length).toBe(1)
     expect(history.publishedSnapshotId).toBe("snap-h1")
   }))
@@ -277,134 +321,253 @@ test("handlers: unknown profile returns ProfileNotFound", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
-    const error = yield* client.GetProfileHistory({ profileId: "missing" }).pipe(Effect.flip)
+    const error = yield* client.GetProfileHistory({ profileId: makeProfileId(999) }).pipe(Effect.flip)
     expect(error).toBeInstanceOf(ProfileNotFound)
   }))
 })
 
-// ---------------------------------------------------------------------------
-// Pure aggregate: error guards
-// ---------------------------------------------------------------------------
-
 test("CreateProfile on existing profile fails", async () => {
+  const profileId = makeProfileId(11)
   const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "e-1", ownerAgentId: "a", branchId: "main", schemaVersion: "1.0",
-    maskedProfileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "init", sources: []
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
   })))
   const err = await run(handle(s1, new CreateProfile({
-    profileId: "e-1", ownerAgentId: "a", branchId: "main", schemaVersion: "1.0",
-    maskedProfileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "duplicate", sources: []
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "duplicate",
+    sources: []
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+})
+
+test("CreateProfile rejects mismatched profile uuid", async () => {
+  const profileId = makeProfileId(12)
+  const err = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(makeProfileId(13), "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
   })).pipe(Effect.flip))
   expect(err._tag).toBe("ProfileError")
 })
 
 test("MergeProfileData on empty profile fails", async () => {
+  const profileId = makeProfileId(14)
   const err = await run(handle(initialProfileState, new MergeProfileData({
-    profileId: "e-2", branchId: "main", schemaVersion: "1.0",
-    maskedProfileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "merge on empty", sources: []
+    profileId,
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "merge on empty",
+    sources: []
   })).pipe(Effect.flip))
   expect(err._tag).toBe("ProfileError")
 })
 
 test("ForkProfileBranch on empty profile fails", async () => {
   const err = await run(handle(initialProfileState, new ForkProfileBranch({
-    profileId: "e-3", branchId: "alt", label: "Alt", baseBranchId: "", baseRevision: 0,
-    baseSnapshotId: "", metadataJson: "{}", schemaVersion: "1.0", actorId: "a", summary: "fork"
+    profileId: makeProfileId(15),
+    branchId: "alt",
+    label: "Alt",
+    baseBranchId: "",
+    baseRevision: 0,
+    baseSnapshotId: "",
+    metadataJson: "{}",
+    schemaVersion: "1.0",
+    actorId: "a",
+    summary: "fork"
   })).pipe(Effect.flip))
   expect(err._tag).toBe("ProfileError")
 })
 
 test("ForkProfileBranch with duplicate branchId fails", async () => {
+  const profileId = makeProfileId(16)
   const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "e-4", ownerAgentId: "a", branchId: "main", schemaVersion: "1.0",
-    maskedProfileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "init", sources: []
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
   })))
   const err = await run(handle(s1, new ForkProfileBranch({
-    profileId: "e-4", branchId: "main", label: "dup", baseBranchId: "main", baseRevision: s1.revision,
-    baseSnapshotId: "", metadataJson: "{}", schemaVersion: "1.0", actorId: "a", summary: "dup fork"
+    profileId,
+    branchId: "main",
+    label: "dup",
+    baseBranchId: "main",
+    baseRevision: s1.revision,
+    baseSnapshotId: "",
+    metadataJson: "{}",
+    schemaVersion: "1.0",
+    actorId: "a",
+    summary: "dup fork"
   })).pipe(Effect.flip))
   expect(err._tag).toBe("ProfileError")
 })
 
 test("CreateProfileSnapshot with duplicate snapshotId fails", async () => {
+  const profileId = makeProfileId(17)
   const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "e-5", ownerAgentId: "a", branchId: "main", schemaVersion: "1.0",
-    maskedProfileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "init", sources: []
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
   })))
   const { state: s2 } = await run(handle(s1, new CreateProfileSnapshot({
-    profileId: "e-5", branchId: "main", snapshotId: "snap-e5", snapshotType: "MANUAL",
-    schemaVersion: "1.0", profileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "first snap"
+    profileId,
+    branchId: "main",
+    snapshotId: "snap-e5",
+    snapshotType: "MANUAL",
+    schemaVersion: "1.0",
+    profileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "first snap"
   })))
   const err = await run(handle(s2, new CreateProfileSnapshot({
-    profileId: "e-5", branchId: "main", snapshotId: "snap-e5", snapshotType: "MANUAL",
-    schemaVersion: "1.0", profileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "dup snap"
+    profileId,
+    branchId: "main",
+    snapshotId: "snap-e5",
+    snapshotType: "MANUAL",
+    schemaVersion: "1.0",
+    profileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "dup snap"
   })).pipe(Effect.flip))
   expect(err._tag).toBe("ProfileError")
 })
 
 test("PublishProfileSnapshot on unknown snapshotId fails", async () => {
+  const profileId = makeProfileId(18)
   const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
-    profileId: "e-6", ownerAgentId: "a", branchId: "main", schemaVersion: "1.0",
-    maskedProfileJson: "{}", metadataJson: "{}", piiStorageKey: "", piiJson: "",
-    piiJurisdiction: "", actorId: "a", summary: "init", sources: []
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
   })))
   const err = await run(handle(s1, new PublishProfileSnapshot({
-    profileId: "e-6", snapshotId: "no-such-snap", strategyJson: "{}",
-    metadataJson: "{}", schemaVersion: "1.0", actorId: "a"
+    profileId,
+    snapshotId: "no-such-snap",
+    strategyJson: "{}",
+    metadataJson: "{}",
+    schemaVersion: "1.0",
+    actorId: "a"
   })).pipe(Effect.flip))
   expect(err._tag).toBe("ProfileError")
 })
 
-// ---------------------------------------------------------------------------
-// Handler integration: GetProfile + snapshot recovery
-// ---------------------------------------------------------------------------
-
 test("handlers: GetProfile returns current state", async () => {
   const { handlersLayer } = makeTestLayers()
+  const profileId = makeProfileId(19)
+
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
     yield* client.CreateProfile({
-      profileId: "h-get-1", ownerAgentId: "agent-1", branchId: "main", schemaVersion: "1.0",
-      maskedProfileJson: "{\"headline\":\"Vocalist\"}", metadataJson: "{}", piiStorageKey: "",
-      piiJson: "", piiJurisdiction: "", actorId: "agent-1", summary: "Create", sources: []
+      profileId,
+      ownerAgentId: "agent-1",
+      branchId: "main",
+      schemaVersion: "1.0",
+      maskedProfileJson: makeProfile(profileId, "Vocalist"),
+      metadataJson: "{}",
+      piiStorageKey: "",
+      piiJson: "",
+      piiJurisdiction: "",
+      actorId: "agent-1",
+      summary: "Create",
+      sources: []
     })
-    const state = yield* client.GetProfile({ profileId: "h-get-1" })
-    expect(state.profileId).toBe("h-get-1")
+    const state = yield* client.GetProfile({ profileId })
+    expect(state.profileId).toBe(profileId)
     expect(state.status).toBe("draft")
-    expect(state.maskedProfileJson).toBe("{\"headline\":\"Vocalist\"}")
+    expect(state.maskedProfileJson?.user_data.personal_info.relevant_position).toBe("Vocalist")
   }))
 })
 
 test("handlers: GetProfile for unknown profile returns ProfileNotFound", async () => {
   const { handlersLayer } = makeTestLayers()
+  const profileId = makeProfileId(20)
+
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
-    const err = yield* client.GetProfile({ profileId: "no-profile" }).pipe(Effect.flip)
+    const err = yield* client.GetProfile({ profileId }).pipe(Effect.flip)
     expect(err._tag).toBe("ProfileNotFound")
-    expect((err as unknown as ProfileNotFound).profileId).toBe("no-profile")
+    expect((err as unknown as ProfileNotFound).profileId).toBe(profileId)
   }))
 })
 
 test("snapshot recovery: GetProfile loads state from snapshot store", async () => {
   const { snapshotStore, handlersLayer } = makeTestLayers()
+  const profileId = makeProfileId(21)
 
-  // Simulate a server restart: pre-seed snapshot store with a known state.
-  // The handler's SynchronizedRef starts empty — it must fall back to the snapshot.
-  snapshotStore.set("snap-recovery-1", {
+  snapshotStore.set(profileId, {
     state: new ProfileState({
       status: "draft",
-      profileId: "snap-recovery-1",
+      profileId,
       ownerAgentId: "agent-x",
       activeBranchId: "main",
       currentSchemaVersion: "2.0",
-      maskedProfileJson: "{\"headline\":\"Recovered\"}",
+      maskedProfileJson: makeProfile(profileId, "Recovered"),
       latestMetadataJson: "{}",
       latestPiiStorageKey: "",
       piiJurisdiction: "",
@@ -420,10 +583,10 @@ test("snapshot recovery: GetProfile loads state from snapshot store", async () =
 
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
-    const state = yield* client.GetProfile({ profileId: "snap-recovery-1" })
+    const state = yield* client.GetProfile({ profileId })
     expect(state.status).toBe("draft")
-    expect(state.profileId).toBe("snap-recovery-1")
-    expect(state.maskedProfileJson).toBe("{\"headline\":\"Recovered\"}")
+    expect(state.profileId).toBe(profileId)
+    expect(state.maskedProfileJson?.user_data.personal_info.relevant_position).toBe("Recovered")
     expect(state.ownerAgentId).toBe("agent-x")
   }))
 })

@@ -21,20 +21,37 @@ import { Identity } from "@effect/experimental/EventLog"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { ProfileProviderProjectionLayer } from "./projector.js"
 import { ProfileProviderEventLogSchema } from "./events.js"
+import {
+  OutboxWorkerConfigLive,
+  ProfileProviderOutboxPublisherLive,
+  ProfileProviderOutboxStoreLive,
+  ProfileProviderOutboxWorkerLayer
+} from "./outbox.js"
 import { ProfileProviderSnapshotsLive } from "./snapshots.js"
 
 const identityLayer   = Layer.succeed(Identity, Identity.makeRandom())
 const sqlJournalLayer = SqlEventJournal.layer()
+const outboxCoreLayer = Layer.mergeAll(
+  ProfileProviderOutboxStoreLive,
+  OutboxWorkerConfigLive,
+  ProfileProviderOutboxPublisherLive
+)
 
 const EventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
   Layer.provide(ProfileProviderProjectionLayer),
-  Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
+  Layer.provide(Layer.mergeAll(sqlJournalLayer, identityLayer, ProfileProviderOutboxStoreLive))
+)
+
+const OutboxWorkerLayer = ProfileProviderOutboxWorkerLayer.pipe(
+  Layer.provide(outboxCoreLayer)
 )
 
 export const InfrastructureLayer = Layer.mergeAll(
   sqlJournalLayer,
   identityLayer,
   EventLogLayer,
+  outboxCoreLayer,
+  OutboxWorkerLayer,
   ProfileProviderSnapshotsLive
 )
 

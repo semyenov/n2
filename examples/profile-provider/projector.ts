@@ -1,32 +1,26 @@
 import * as Effect from "effect/Effect"
+import * as Schema from "effect/Schema"
 import { EventLog } from "@effect/experimental"
-import { SqlClient, type SqlClient as SqlClientService } from "@effect/sql/SqlClient"
+import { SqlClient } from "@effect/sql/SqlClient"
+import { ProfileDocument } from "./contracts.js"
 import { ProfileProviderEventGroup } from "./events.js"
+import {
+  makeProfileProviderEventMessage,
+  startProfileEventPublish
+} from "./workflows.js"
 
-const enqueueOutbox = (
-  sql: SqlClientService,
-  profileId: string,
-  revision: number,
-  eventType: string,
-  payload: unknown
-) =>
-  sql`
-    INSERT INTO profile_provider_event_outbox
-      (id, profile_id, revision, topic, partition_key, payload_json, headers_json, status, retry_count, last_error)
-    VALUES (
-      ${`${profileId}:${revision}:${eventType}`},
-      ${profileId},
-      ${revision},
-      ${"profile-provider.events"},
-      ${profileId},
-      ${JSON.stringify(payload)},
-      ${JSON.stringify({ eventType, revision })},
-      ${"PENDING"},
-      0,
-      ${""}
-    )
-    ON CONFLICT (id) DO NOTHING
-  `
+const encodeProfile = Schema.encodeSync(ProfileDocument)
+
+const publishProjectedEvent = (options: {
+  readonly profileId: string
+  readonly revision: number
+  readonly eventType: string
+  readonly occurredAt: string
+  readonly payload: unknown
+}) =>
+  startProfileEventPublish(makeProfileProviderEventMessage(options)).pipe(
+    Effect.asVoid
+  )
 
 export const ProfileProviderProjectionLayer = EventLog.group(
   ProfileProviderEventGroup,
@@ -47,7 +41,7 @@ export const ProfileProviderProjectionLayer = EventLog.group(
               ${"draft"},
               ${payload.revision},
               ${payload.schemaVersion},
-              ${payload.maskedProfileJson},
+              ${JSON.stringify(encodeProfile(payload.maskedProfileJson))},
               ${"{}"},
               ${""},
               ${""},
@@ -58,13 +52,19 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             ON CONFLICT (profile_id) DO UPDATE SET
               owner_agent_id = EXCLUDED.owner_agent_id,
               active_branch_id = EXCLUDED.active_branch_id,
-              status = EXCLUDED.status,
-              current_revision = EXCLUDED.current_revision,
-              current_schema_version = EXCLUDED.current_schema_version,
-              masked_profile_json = EXCLUDED.masked_profile_json,
-              updated_at = EXCLUDED.updated_at
+                status = EXCLUDED.status,
+                current_revision = EXCLUDED.current_revision,
+                current_schema_version = EXCLUDED.current_schema_version,
+                masked_profile_json = EXCLUDED.masked_profile_json,
+                updated_at = EXCLUDED.updated_at
           `
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "ProfileCreated", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "ProfileCreated",
+            occurredAt: payload.createdAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
       .handle("MergedDataProfile", ({ payload }) =>
@@ -76,11 +76,17 @@ export const ProfileProviderProjectionLayer = EventLog.group(
                 status = ${"draft"},
                 current_revision = ${payload.revision},
                 current_schema_version = ${payload.schemaVersion},
-                masked_profile_json = ${payload.maskedProfileJson},
+                masked_profile_json = ${JSON.stringify(encodeProfile(payload.maskedProfileJson))},
                 updated_at = ${payload.mergedAt.toJSON()}
             WHERE profile_id = ${payload.profileId}
           `
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "MergedDataProfile", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "MergedDataProfile",
+            occurredAt: payload.mergedAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
       .handle("SnapshotCreatedProfile", ({ payload }) =>
@@ -96,7 +102,7 @@ export const ProfileProviderProjectionLayer = EventLog.group(
               ${payload.branchId},
               ${payload.revision},
               ${payload.snapshotType},
-              ${payload.profileJson},
+              ${JSON.stringify(encodeProfile(payload.profileJson))},
               ${payload.metadataJson},
               ${payload.schemaVersion},
               ${payload.summary},
@@ -112,7 +118,13 @@ export const ProfileProviderProjectionLayer = EventLog.group(
               schema_version = EXCLUDED.schema_version,
               summary = EXCLUDED.summary
           `
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "SnapshotCreatedProfile", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "SnapshotCreatedProfile",
+            occurredAt: payload.createdAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
       .handle("MetaDataCreated", ({ payload }) =>
@@ -134,7 +146,13 @@ export const ProfileProviderProjectionLayer = EventLog.group(
               WHERE profile_id = ${payload.profileId}
             `
           }
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "MetaDataCreated", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "MetaDataCreated",
+            occurredAt: payload.createdAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
       .handle("PersonalDataExtracted", ({ payload }) =>
@@ -147,7 +165,13 @@ export const ProfileProviderProjectionLayer = EventLog.group(
                 updated_at = ${payload.extractedAt.toJSON()}
             WHERE profile_id = ${payload.profileId}
           `
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "PersonalDataExtracted", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "PersonalDataExtracted",
+            occurredAt: payload.extractedAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
       .handle("ProfileBranchForked", ({ payload }) =>
@@ -160,7 +184,13 @@ export const ProfileProviderProjectionLayer = EventLog.group(
                 updated_at = ${payload.createdAt.toJSON()}
             WHERE profile_id = ${payload.profileId}
           `
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "ProfileBranchForked", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "ProfileBranchForked",
+            occurredAt: payload.createdAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
       .handle("SnapshotPublishedProfile", ({ payload }) =>
@@ -180,7 +210,13 @@ export const ProfileProviderProjectionLayer = EventLog.group(
                 strategy_json = ${payload.strategyJson}
             WHERE snapshot_id = ${payload.snapshotId}
           `
-          yield* enqueueOutbox(sql, payload.profileId, payload.revision, "SnapshotPublishedProfile", payload)
+          yield* publishProjectedEvent({
+            profileId: payload.profileId as string,
+            revision: payload.revision,
+            eventType: "SnapshotPublishedProfile",
+            occurredAt: payload.publishedAt.toJSON() as string,
+            payload
+          })
         }).pipe(Effect.orDie)
       )
 )

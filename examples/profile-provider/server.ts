@@ -6,7 +6,7 @@
  *   curl -s http://localhost:4100/health
  *   curl -s -X POST http://localhost:4100/rpc/profile-provider \
  *     -H 'Content-Type: application/json' \
- *     -d '{"jsonrpc":"2.0","method":"CreateProfile","params":{"profileId":"p-1","ownerAgentId":"a-1","branchId":"main","schemaVersion":"1.0","maskedProfileJson":"{}","metadataJson":"{}","piiStorageKey":"","piiJson":"","piiJurisdiction":"","actorId":"a-1","summary":"init","sources":[]},"id":1}'
+ *     -d '{"jsonrpc":"2.0","method":"CreateProfile","params":{"profileId":"00000000-0000-4000-8000-000000000001","ownerAgentId":"a-1","branchId":"main","schemaVersion":"1.0","maskedProfileJson":{"uuid":"00000000-0000-4000-8000-000000000001","created_at":"2026-01-01T00:00:00.000Z","user_data":{"personal_info":{"first_name":"Ada","last_name":"Lovelace","relevant_position":"Platform Engineer"},"salary_expectations":{"currency":"USD","amount_from":1000},"skills":[{"name":"TypeScript","level":"advanced"}],"education":[{"degree":"Bachelor","field_of_study":"Computer Science","institution":"Analytical Engine Institute"}]},"user_meta_data":{"version":1}},"metadataJson":"{}","piiStorageKey":"","piiJson":"","piiJurisdiction":"","actorId":"a-1","summary":"init","sources":[]},"id":1}'
  *
  * RpcServer.layerHttpRouter registers an HTTP route for the RpcGroup.
  *   protocol: "http"          — use HTTP request/response (not WebSocket)

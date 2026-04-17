@@ -20,18 +20,20 @@
 import * as Schema from "effect/Schema"
 import { EventGroup } from "@effect/experimental"
 import * as EventLogApi from "@effect/experimental/EventLog"
-import { MetadataScope, SnapshotType } from "./contracts.js"
+import { MetadataScope, ProfileDocument, SnapshotType } from "./contracts.js"
+
+const ProfileId = Schema.UUID
 
 export const ProfileProviderEventGroup = EventGroup.empty
   .add({
     tag: "ProfileCreated",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       ownerAgentId: Schema.String,
       branchId: Schema.String,
       schemaVersion: Schema.String,
-      maskedProfileJson: Schema.String,
+      maskedProfileJson: ProfileDocument,
       createdAt: Schema.DateTimeUtc,
       createdBy: Schema.String,
       summary: Schema.String,
@@ -42,10 +44,10 @@ export const ProfileProviderEventGroup = EventGroup.empty
     tag: "MergedDataProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       branchId: Schema.String,
       schemaVersion: Schema.String,
-      maskedProfileJson: Schema.String,
+      maskedProfileJson: ProfileDocument,
       mergedAt: Schema.DateTimeUtc,
       mergedBy: Schema.String,
       summary: Schema.String,
@@ -57,11 +59,11 @@ export const ProfileProviderEventGroup = EventGroup.empty
     tag: "SnapshotCreatedProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       branchId: Schema.String,
       snapshotId: Schema.String,
       snapshotType: SnapshotType,
-      profileJson: Schema.String,
+      profileJson: ProfileDocument,
       metadataJson: Schema.String,
       schemaVersion: Schema.String,
       createdAt: Schema.DateTimeUtc,
@@ -74,7 +76,7 @@ export const ProfileProviderEventGroup = EventGroup.empty
     tag: "MetaDataCreated",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       branchId: Schema.String,
       scope: MetadataScope,
       scopeId: Schema.String,
@@ -89,7 +91,7 @@ export const ProfileProviderEventGroup = EventGroup.empty
     tag: "PersonalDataExtracted",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       branchId: Schema.String,
       scope: MetadataScope,
       scopeId: Schema.String,
@@ -105,7 +107,7 @@ export const ProfileProviderEventGroup = EventGroup.empty
     tag: "ProfileBranchForked",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       branchId: Schema.String,
       label: Schema.String,
       baseBranchId: Schema.String,
@@ -121,7 +123,7 @@ export const ProfileProviderEventGroup = EventGroup.empty
     tag: "SnapshotPublishedProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
     payload: Schema.Struct({
-      profileId: Schema.String,
+      profileId: ProfileId,
       snapshotId: Schema.String,
       strategyJson: Schema.String,
       publishedAt: Schema.DateTimeUtc,
