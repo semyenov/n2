@@ -1,58 +1,58 @@
 /**
  * Infrastructure layer composition.
  *
- * InfrastructureLayer (dev + cluster) composes:
- *   sqlJournalLayer       — R: SqlClient — provides EventJournal (backed by PostgreSQL)
- *   identityLayer         — R: never     — provides Identity (random UUID at startup)
- *   EventLogLayer         — R: SqlClient — provides EventLog (dispatch watcher)
- *   ProfileProviderSnapshotsLive — R: SqlClient — provides ProfileProviderSnapshots
+ * Two infrastructure layers are exported:
  *
- * Named constants (sqlJournalLayer, identityLayer) ensure Effect deduplicates
- * shared layers: the same constant referenced in both InfrastructureLayer and
- * EventLogLayer is built exactly once at runtime.
+ *   InfrastructureLayer        — dev / server.ts
+ *     WorkflowEngine.layerMemory (in-process, lost on restart)
  *
- * There are no durable workflows in the profile-provider service, so no
- * WorkflowEngine is needed. ClusterInfrastructureLayer is therefore identical
- * to InfrastructureLayer — both use SqlEventJournal with no WorkflowEngine dependency.
+ *   ClusterInfrastructureLayer — cluster.ts
+ *     ClusterWorkflowEngine.layer (backed by Sharding + MessageStorage)
  */
 import * as Layer from "effect/Layer"
 import * as EventLogApi from "@effect/experimental/EventLog"
 import { Identity } from "@effect/experimental/EventLog"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
+import { ClusterWorkflowEngine } from "@effect/cluster"
+import { WorkflowEngine } from "@effect/workflow"
 import { ProfileProviderProjectionLayer } from "./projector.js"
 import { ProfileProviderEventLogSchema } from "./events.js"
-import {
-  OutboxWorkerConfigLive,
-  ProfileProviderOutboxPublisherLive,
-  ProfileProviderOutboxStoreLive,
-  ProfileProviderOutboxWorkerLayer
-} from "./outbox.js"
 import { ProfileProviderSnapshotsLive } from "./snapshots.js"
+import {
+  ProfileProviderEventPublishHandlers,
+  ProfileProviderEventPublisherLive
+} from "./workflows.js"
 
 const identityLayer   = Layer.succeed(Identity, Identity.makeRandom())
 const sqlJournalLayer = SqlEventJournal.layer()
-const outboxCoreLayer = Layer.mergeAll(
-  ProfileProviderOutboxStoreLive,
-  OutboxWorkerConfigLive,
-  ProfileProviderOutboxPublisherLive
+
+export const WorkflowLayer = Layer.provideMerge(
+  ProfileProviderEventPublishHandlers,
+  Layer.merge(WorkflowEngine.layerMemory, ProfileProviderEventPublisherLive)
+)
+
+export const ClusterWorkflowLayer = Layer.provideMerge(
+  ProfileProviderEventPublishHandlers,
+  Layer.merge(ClusterWorkflowEngine.layer, ProfileProviderEventPublisherLive)
 )
 
 const EventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
   Layer.provide(ProfileProviderProjectionLayer),
-  Layer.provide(Layer.mergeAll(sqlJournalLayer, identityLayer, ProfileProviderOutboxStoreLive))
-)
-
-const OutboxWorkerLayer = ProfileProviderOutboxWorkerLayer.pipe(
-  Layer.provide(outboxCoreLayer)
+  Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
 )
 
 export const InfrastructureLayer = Layer.mergeAll(
   sqlJournalLayer,
   identityLayer,
+  WorkflowLayer,
   EventLogLayer,
-  outboxCoreLayer,
-  OutboxWorkerLayer,
   ProfileProviderSnapshotsLive
 )
 
-export const ClusterInfrastructureLayer = InfrastructureLayer
+export const ClusterInfrastructureLayer = Layer.mergeAll(
+  sqlJournalLayer,
+  identityLayer,
+  ClusterWorkflowLayer,
+  EventLogLayer,
+  ProfileProviderSnapshotsLive
+)

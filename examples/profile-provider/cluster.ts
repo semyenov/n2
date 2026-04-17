@@ -69,5 +69,5 @@ BunRuntime.runMain(
         ShardingLayer
       )
     )
-  )
+  ) as Effect.Effect<void, never, never>
 )
