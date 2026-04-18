@@ -10,11 +10,16 @@ export default Effect.gen(function* () {
       revision      INTEGER NOT NULL,
       topic         TEXT NOT NULL,
       partition_key TEXT NOT NULL,
+      occurred_at   TEXT NOT NULL,
       payload_json  TEXT NOT NULL,
       headers_json  TEXT NOT NULL,
       status        TEXT NOT NULL,
       retry_count   INTEGER NOT NULL,
-      last_error    TEXT NOT NULL
+      last_error    TEXT NOT NULL,
+      created_at    TEXT NOT NULL,
+      updated_at    TEXT NOT NULL,
+      published_at  TEXT NOT NULL,
+      next_attempt_at TEXT NOT NULL
     )
   `
 })

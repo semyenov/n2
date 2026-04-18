@@ -14,6 +14,10 @@ import * as EventLogApi from "@effect/experimental/EventLog"
 import { Identity } from "@effect/experimental/EventLog"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { ClusterWorkflowEngine } from "@effect/cluster"
+import {
+  ProfileProviderOutboxPgLive,
+  ProfileProviderOutboxWorkerLive
+} from "./outbox.js"
 import { WorkflowEngine } from "@effect/workflow"
 import { ProfileProviderProjectionStorePgLive } from "./projection-store-pg.js"
 import { ProfileProviderProjectionLayer } from "./projector.js"
@@ -46,6 +50,8 @@ export const InfrastructureLayer = Layer.mergeAll(
   sqlJournalLayer,
   identityLayer,
   WorkflowLayer,
+  ProfileProviderOutboxPgLive,
+  ProfileProviderOutboxWorkerLive,
   EventLogLayer,
   ProfileProviderSnapshotsLive
 )
@@ -54,6 +60,8 @@ export const ClusterInfrastructureLayer = Layer.mergeAll(
   sqlJournalLayer,
   identityLayer,
   ClusterWorkflowLayer,
+  ProfileProviderOutboxPgLive,
+  ProfileProviderOutboxWorkerLive,
   EventLogLayer,
   ProfileProviderSnapshotsLive
 )

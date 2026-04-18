@@ -11,10 +11,7 @@ import {
 } from "./contracts.js"
 import { ProfileProviderProjectionStore } from "./projection-store.js"
 import { ProfileProviderEventGroup } from "./events.js"
-import {
-  makeProfileProviderEventMessage,
-  startProfileEventPublish
-} from "./workflows.js"
+import { makeProfileProviderEventMessage } from "./workflows.js"
 
 export const ProfileProviderProjectionLayer = EventLog.group(
   ProfileProviderEventGroup,
@@ -31,7 +28,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new ProfileCreated(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
       .handle("MergedDataProfile", ({ payload }) =>
@@ -45,7 +41,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new MergedDataProfile(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
       .handle("SnapshotCreatedProfile", ({ payload }) =>
@@ -59,7 +54,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new SnapshotCreatedProfile(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
       .handle("MetaDataCreated", ({ payload }) =>
@@ -73,7 +67,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new MetaDataCreated(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
       .handle("PersonalDataExtracted", ({ payload }) =>
@@ -87,7 +80,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new PersonalDataExtracted(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
       .handle("ProfileBranchForked", ({ payload }) =>
@@ -101,7 +93,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new ProfileBranchForked(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
       .handle("SnapshotPublishedProfile", ({ payload }) =>
@@ -115,7 +106,6 @@ export const ProfileProviderProjectionLayer = EventLog.group(
             payload
           })
           yield* store.project(new SnapshotPublishedProfile(payload), message)
-          yield* startProfileEventPublish(message).pipe(Effect.asVoid)
         }).pipe(Effect.orDie)
       )
 )

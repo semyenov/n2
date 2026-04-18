@@ -9,23 +9,31 @@ import type { ProfileProviderEventMessage } from "./workflows.js"
 const encodeProfile = Schema.encodeSync(ProfileDocument)
 
 const insertOutbox = (sql: SqlClientInstance, message: ProfileProviderEventMessage) =>
-  sql`
-    INSERT INTO profile_provider_event_outbox
-      (id, profile_id, revision, topic, partition_key, payload_json, headers_json, status, retry_count, last_error)
-    VALUES (
-      ${message.id},
-      ${message.profileId},
-      ${message.revision},
-      ${message.topic},
-      ${message.partitionKey},
-      ${JSON.stringify(message.payload)},
-      ${JSON.stringify(message.headers)},
-      ${"pending"},
-      ${0},
-      ${""}
-    )
-    ON CONFLICT (id) DO NOTHING
-  `.pipe(Effect.asVoid)
+  {
+    const now = new Date().toISOString()
+    return sql`
+      INSERT INTO profile_provider_event_outbox
+      (id, profile_id, revision, topic, partition_key, occurred_at, payload_json, headers_json, status, retry_count, last_error, created_at, updated_at, published_at, next_attempt_at)
+      VALUES (
+        ${message.id},
+        ${message.profileId},
+        ${message.revision},
+        ${message.topic},
+        ${message.partitionKey},
+        ${message.occurredAt},
+        ${JSON.stringify(message.payload)},
+        ${JSON.stringify(message.headers)},
+        ${"pending"},
+        ${0},
+        ${""},
+        ${now},
+        ${now},
+        ${""},
+        ${""}
+      )
+      ON CONFLICT (id) DO NOTHING
+    `.pipe(Effect.asVoid)
+  }
 
 const projectEvent = (sql: SqlClientInstance, event: ProfileEvent) => {
   switch (event._tag) {
