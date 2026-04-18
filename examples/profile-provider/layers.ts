@@ -15,6 +15,7 @@ import { Identity } from "@effect/experimental/EventLog"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { ClusterWorkflowEngine } from "@effect/cluster"
 import { WorkflowEngine } from "@effect/workflow"
+import { ProfileProviderProjectionStorePgLive } from "./projection-store-pg.js"
 import { ProfileProviderProjectionLayer } from "./projector.js"
 import { ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderSnapshotsLive } from "./snapshots.js"
@@ -37,7 +38,7 @@ export const ClusterWorkflowLayer = Layer.provideMerge(
 )
 
 const EventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
-  Layer.provide(ProfileProviderProjectionLayer),
+  Layer.provide(Layer.provide(ProfileProviderProjectionLayer, ProfileProviderProjectionStorePgLive)),
   Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
 )
 
