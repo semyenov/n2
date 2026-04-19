@@ -77,3 +77,16 @@ export {
   type OutboxEntry,
   type OutboxService
 } from "./Outbox.js"
+
+export {
+  makePublishWorkflow,
+  EventPublishError
+} from "./PublishWorkflow.js"
+
+export { makeEventDecoder } from "./EventDecoder.js"
+
+export {
+  makeReplayTool,
+  parseReplayOptions,
+  type ReplayOptions
+} from "./Replay.js"

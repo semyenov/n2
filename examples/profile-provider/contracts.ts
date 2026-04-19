@@ -311,6 +311,25 @@ const ProfileEvents = N2.defineEvents(
 export const ProfileEvent = ProfileEvents.schema
 export type ProfileEvent = typeof ProfileEvent.Type
 
+/** Per-event metadata: which field holds the business timestamp. */
+export const ProfileEventMeta: {
+  readonly [K in ProfileEvent["_tag"]]: { readonly occurredAt: string }
+} = {
+  ProfileCreated: { occurredAt: "createdAt" },
+  MergedDataProfile: { occurredAt: "mergedAt" },
+  SnapshotCreatedProfile: { occurredAt: "createdAt" },
+  MetaDataCreated: { occurredAt: "createdAt" },
+  PersonalDataExtracted: { occurredAt: "extractedAt" },
+  ProfileBranchForked: { occurredAt: "createdAt" },
+  SnapshotPublishedProfile: { occurredAt: "publishedAt" }
+}
+
+/** Extract the business timestamp (as ISO string) from any profile event. */
+export const eventOccurredAt = (event: ProfileEvent): string => {
+  const record = event as unknown as Record<string, { toJSON(): unknown }>
+  return String(record[ProfileEventMeta[event._tag].occurredAt]!.toJSON())
+}
+
 export class ProfileError extends Schema.TaggedError<ProfileError>()(
   "ProfileError",
   { message: Schema.String }

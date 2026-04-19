@@ -30,7 +30,7 @@ import { computeRetryDelaySeconds } from "./Outbox.js"
 export class EventPublishError extends Schema.TaggedError<EventPublishError>()(
   "EventPublishError",
   { message: Schema.String }
-) {}
+) { }
 
 interface PublisherService<Message> {
   readonly publish: (message: Message) => Effect.Effect<void, unknown>
@@ -44,10 +44,10 @@ interface PublisherService<Message> {
  * @param config.publisherTag - Context.Tag for the publisher service
  * @param config.idOf - Extract unique ID from message (defaults to `m.id`)
  */
-export const makePublishWorkflow = <Message extends { readonly id: string }, Encoded>(config: {
+export const makePublishWorkflow = <Message extends { readonly id: string }>(config: {
   readonly name: string
-  readonly messageSchema: Schema.Schema<Message, Encoded>
-  readonly publisherTag: Context.Tag</* identifier */ never, PublisherService<Message>>
+  readonly messageSchema: Workflow.AnyStructSchema & Schema.Schema<Message>
+  readonly publisherTag: Context.Tag</* identifier */ any, PublisherService<Message>>
   readonly idOf?: (message: Message) => string
 }) => {
   const idOf = config.idOf ?? ((m: Message) => m.id)
@@ -57,7 +57,7 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Enc
       name: `${config.name}/${attempt}`,
       error: EventPublishError,
       execute: Effect.gen(function* () {
-        const publisher = yield* config.publisherTag as Context.Tag<never, PublisherService<Message>>
+        const publisher = yield* config.publisherTag
         return yield* publisher.publish(message).pipe(
           Effect.catchAllCause((cause) =>
             Effect.fail(new EventPublishError({ message: Cause.pretty(cause) }))

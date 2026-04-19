@@ -1,10 +1,9 @@
-import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import { Activity, DurableClock, Workflow, WorkflowEngine } from "@effect/workflow"
 import { computeRetryDelaySeconds } from "../../src/framework/helpers/Outbox.js"
+import { makePublishWorkflow } from "../../src/framework/helpers/PublishWorkflow.js"
 
 const Headers = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 const TOPIC = "profile-provider.events"
@@ -20,11 +19,6 @@ export class ProfileProviderEventMessage extends Schema.Class<ProfileProviderEve
   payload: Schema.Unknown,
   headers: Headers
 }) {}
-
-export class ProfileProviderEventPublishError extends Schema.TaggedError<ProfileProviderEventPublishError>()(
-  "ProfileProviderEventPublishError",
-  { message: Schema.String }
-) {}
 
 export class ProfileProviderEventPublisher extends Context.Tag("ProfileProviderEventPublisher")<
   ProfileProviderEventPublisher,
@@ -60,81 +54,16 @@ export const makeProfileProviderEventMessage = (options: {
     }
   })
 
-const publishProfileEvent = (
-  message: ProfileProviderEventMessage,
-  attempt: number
-) =>
-  Activity.make({
-    name: `PublishProfileEvent/${attempt}`,
-    error: ProfileProviderEventPublishError,
-    execute: Effect.gen(function* () {
-      const publisher = yield* ProfileProviderEventPublisher
-      return yield* publisher.publish(message).pipe(
-        Effect.catchAllCause((cause) =>
-          Effect.fail(new ProfileProviderEventPublishError({ message: Cause.pretty(cause) }))
-        )
-      )
-    })
-  })
-
-const retryPublish = (
-  message: ProfileProviderEventMessage,
-  executionId: string,
-  attempt: number
-): Effect.Effect<void, never, any> =>
-  publishProfileEvent(message, attempt).pipe(
-    Effect.catchTag("ProfileProviderEventPublishError", (error) => {
-      const delaySeconds = computeRetryDelaySeconds(attempt)
-      return Effect.logWarning("[profile-provider] publish workflow retry scheduled").pipe(
-        Effect.annotateLogs({
-          eventMessageId: message.id,
-          executionId,
-          attempt,
-          delaySeconds,
-          error: error.message
-        }),
-        Effect.zipRight(DurableClock.sleep({
-          name: `publish-retry-${attempt}`,
-          duration: `${delaySeconds} seconds`,
-          inMemoryThreshold: "0 millis"
-        })),
-        Effect.zipRight(retryPublish(message, executionId, attempt + 1))
-      )
-    })
-  )
-
-export const ProfileEventPublishWorkflow = Workflow.make({
+const publishWorkflow = makePublishWorkflow({
   name: "ProfileEventPublish",
-  payload: ProfileProviderEventMessage,
-  success: Schema.Void,
-  idempotencyKey: (payload) => payload.id
+  messageSchema: ProfileProviderEventMessage,
+  publisherTag: ProfileProviderEventPublisher,
+  idOf: (m) => m.id
 })
 
-export const startProfileEventPublish = (message: ProfileProviderEventMessage) =>
-  Effect.gen(function* () {
-    const engine = yield* Effect.orDie(Effect.serviceOptional(WorkflowEngine.WorkflowEngine))
-    return yield* engine.execute(ProfileEventPublishWorkflow, {
-      executionId: message.id,
-      payload: message,
-      discard: true
-    })
-  })
-
-export const ProfileProviderEventPublishHandlers = ProfileEventPublishWorkflow.toLayer(
-  (payload, executionId) =>
-    retryPublish(payload, executionId, 1).pipe(
-      Effect.zipRight(
-        Effect.logInfo("[profile-provider] publish workflow completed").pipe(
-          Effect.annotateLogs({
-            eventMessageId: payload.id,
-            executionId,
-            topic: payload.topic,
-            partitionKey: payload.partitionKey
-          })
-        )
-      )
-    )
-)
+export const ProfileEventPublishWorkflow = publishWorkflow.workflow
+export const startProfileEventPublish = publishWorkflow.start
+export const ProfileProviderEventPublishHandlers = publishWorkflow.handlers
 
 export const ProfileProviderEventPublisherLive = Layer.succeed(
   ProfileProviderEventPublisher,

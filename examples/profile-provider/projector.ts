@@ -1,7 +1,8 @@
 import * as Effect from "effect/Effect"
 import { EventLog } from "@effect/experimental"
-import type { ProfileEvent } from "./contracts.js"
 import {
+  type ProfileEvent,
+  eventOccurredAt,
   ProfileCreated,
   MergedDataProfile,
   SnapshotCreatedProfile,
@@ -15,25 +16,12 @@ import { ProfileProviderOutbox } from "./outbox.js"
 import { ProfileProviderEventGroup } from "./events.js"
 import { makeProfileProviderEventMessage } from "./workflows.js"
 
-/** Exhaustive, type-safe extraction of the business timestamp from each event. */
-const occurredAt = (event: ProfileEvent): string => {
-  switch (event._tag) {
-    case "ProfileCreated": return String(event.createdAt.toJSON())
-    case "MergedDataProfile": return String(event.mergedAt.toJSON())
-    case "SnapshotCreatedProfile": return String(event.createdAt.toJSON())
-    case "MetaDataCreated": return String(event.createdAt.toJSON())
-    case "PersonalDataExtracted": return String(event.extractedAt.toJSON())
-    case "ProfileBranchForked": return String(event.createdAt.toJSON())
-    case "SnapshotPublishedProfile": return String(event.publishedAt.toJSON())
-  }
-}
-
 const makeMessage = (event: ProfileEvent) =>
   makeProfileProviderEventMessage({
     profileId: event.profileId,
     revision: event.revision,
     eventType: event._tag,
-    occurredAt: occurredAt(event),
+    occurredAt: eventOccurredAt(event),
     payload: event
   })
 

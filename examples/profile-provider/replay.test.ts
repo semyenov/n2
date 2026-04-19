@@ -68,7 +68,7 @@ test("parseReplayOptions parses profile and revision filters", () => {
     "--dry-run",
     "--no-reset"
   ], true)).toEqual({
-    profileId: "profile-1",
+    entityId: "profile-1",
     minRevision: 2,
     maxRevision: 8,
     dryRun: true,
@@ -128,7 +128,7 @@ test("collectReplayEvents filters journal entries by profile and revision range"
       const journal = yield* ExpEventJournal.EventJournal
       const entries = yield* journal.entries
       return yield* collectReplayEvents(entries, {
-        profileId: firstProfileId,
+        entityId: firstProfileId,
         minRevision: 2,
         maxRevision: 5,
         reset: false,

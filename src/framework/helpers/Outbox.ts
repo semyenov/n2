@@ -181,11 +181,11 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
    * Create a single drain pass that claims pending entries and publishes them.
    * Returns `true` if work was done, `false` if queue was empty.
    */
-  makeDrainOnce: <Tag extends Context.Tag</* identifier */ any, OutboxService<Message>>>(options: {
+  makeDrainOnce: <Tag extends Context.Tag</* identifier */ any, OutboxService<Message>>, PublishR>(options: {
     readonly outbox: Tag
-    readonly publish: (message: Message) => Effect.Effect<void, unknown, unknown>
+    readonly publish: (message: Message) => Effect.Effect<void, unknown, PublishR>
     readonly batchSize?: number
-  }): Effect.Effect<boolean, never, Context.Tag.Identifier<Tag>> =>
+  }): Effect.Effect<boolean, never, Context.Tag.Identifier<Tag> | PublishR> =>
     Effect.gen(function* () {
       const outbox = yield* options.outbox as Context.Tag</* identifier */ any, OutboxService<Message>>
       const entries = yield* outbox.claimPending(options.batchSize ?? 50)
@@ -193,7 +193,7 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
       if (entries.length === 0) return false as const
 
       yield* Effect.forEach(entries, (entry) =>
-        (options.publish(entry.message) as Effect.Effect<void, unknown, never>).pipe(
+        options.publish(entry.message).pipe(
           Effect.flatMap(() => outbox.markDispatched(entry.id)),
           Effect.catchAllCause((cause) =>
             outbox.markFailed(entry.id, entry.retryCount + 1, Cause.pretty(cause)).pipe(
@@ -211,17 +211,17 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
         ), { discard: true, concurrency: 1 })
 
       return true as const
-    }) as Effect.Effect<boolean, never, Context.Tag.Identifier<Tag>>,
+    }) as Effect.Effect<boolean, never, Context.Tag.Identifier<Tag> | PublishR>,
 
   /**
    * Create a Layer that runs a background worker draining the outbox.
    */
-  makeWorkerLive: <Tag extends Context.Tag</* identifier */ any, OutboxService<Message>>>(options: {
+  makeWorkerLive: <Tag extends Context.Tag</* identifier */ any, OutboxService<Message>>, PublishR>(options: {
     readonly outbox: Tag
-    readonly publish: (message: Message) => Effect.Effect<void, unknown, unknown>
+    readonly publish: (message: Message) => Effect.Effect<void, unknown, PublishR>
     readonly batchSize?: number
     readonly idleDelay?: DurationInput
-  }): Layer.Layer<never, never, Context.Tag.Identifier<Tag>> => {
+  }): Layer.Layer<never, never, Context.Tag.Identifier<Tag> | PublishR> => {
     const drainOnce = makeOutboxService(config).makeDrainOnce({
       outbox: options.outbox,
       publish: options.publish,
@@ -229,7 +229,7 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
     })
     const idleDelay = options.idleDelay ?? "1 second"
 
-    const loop: Effect.Effect<never, never, Context.Tag.Identifier<Tag>> = Effect.gen(function* () {
+    const loop: Effect.Effect<never, never, Context.Tag.Identifier<Tag> | PublishR> = Effect.gen(function* () {
       const hadWork = yield* drainOnce.pipe(
         Effect.catchAll((error) =>
           Effect.logError("outbox worker storage failure").pipe(
@@ -242,10 +242,10 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
         yield* Effect.sleep(idleDelay)
       }
       return yield* loop
-    }) as Effect.Effect<never, never, Context.Tag.Identifier<Tag>>
+    }) as Effect.Effect<never, never, Context.Tag.Identifier<Tag> | PublishR>
 
     return Layer.scopedDiscard(
       Effect.forkScoped(loop).pipe(Effect.asVoid)
-    ) as Layer.Layer<never, never, Context.Tag.Identifier<Tag>>
+    ) as Layer.Layer<never, never, Context.Tag.Identifier<Tag> | PublishR>
   }
 })

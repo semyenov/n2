@@ -2,7 +2,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
-import { ProfileDocument } from "./contracts.js"
+import { ProfileDocument, eventOccurredAt } from "./contracts.js"
 import type {
   ProfileCreated,
   MergedDataProfile,
@@ -116,7 +116,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
     return {
       onProfileCreated: (event: ProfileCreated) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "ProfileCreated", event.createdAt.toJSON() as string, event.branchId, "", event)
+          yield* insertEvent(ch, event.profileId, event.revision, "ProfileCreated", eventOccurredAt(event), event.branchId, "", event)
           const current = (yield* loadLatestProfile(ch, event.profileId)) ?? initialProfileRow(event.profileId)
           yield* ch.insertQuery({
             table: "profile_provider_profiles_current",
@@ -128,15 +128,15 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
               status: "draft",
               current_schema_version: event.schemaVersion,
               masked_profile_json: JSON.stringify(encodeProfile(event.maskedProfileJson)),
-              created_at: event.createdAt.toJSON() as string,
-              updated_at: event.createdAt.toJSON() as string
+              created_at: eventOccurredAt(event),
+              updated_at: eventOccurredAt(event)
             }]
           }).pipe(Effect.asVoid)
         }),
 
       onMergedDataProfile: (event: MergedDataProfile) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "MergedDataProfile", event.mergedAt.toJSON() as string, event.branchId, "", event)
+          yield* insertEvent(ch, event.profileId, event.revision, "MergedDataProfile", eventOccurredAt(event), event.branchId, "", event)
           const current = (yield* loadLatestProfile(ch, event.profileId)) ?? initialProfileRow(event.profileId)
           yield* ch.insertQuery({
             table: "profile_provider_profiles_current",
@@ -147,14 +147,14 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
               status: "draft",
               current_schema_version: event.schemaVersion,
               masked_profile_json: JSON.stringify(encodeProfile(event.maskedProfileJson)),
-              updated_at: event.mergedAt.toJSON() as string
+              updated_at: eventOccurredAt(event)
             }]
           }).pipe(Effect.asVoid)
         }),
 
       onSnapshotCreatedProfile: (event: SnapshotCreatedProfile) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "SnapshotCreatedProfile", event.createdAt.toJSON() as string, event.branchId, event.snapshotId, event)
+          yield* insertEvent(ch, event.profileId, event.revision, "SnapshotCreatedProfile", eventOccurredAt(event), event.branchId, event.snapshotId, event)
           yield* ch.insertQuery({
             table: "profile_provider_snapshots_current",
             values: [{
@@ -169,7 +169,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
               summary: event.summary,
               published: 0,
               strategy_json: "",
-              created_at: event.createdAt.toJSON() as string,
+              created_at: eventOccurredAt(event),
               created_by: event.createdBy
             }]
           }).pipe(Effect.asVoid)
@@ -177,7 +177,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
 
       onMetaDataCreated: (event: MetaDataCreated) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "MetaDataCreated", event.createdAt.toJSON() as string, event.branchId, "", event)
+          yield* insertEvent(ch, event.profileId, event.revision, "MetaDataCreated", eventOccurredAt(event), event.branchId, "", event)
           if (event.scope === "snapshot") {
             const current = yield* loadLatestSnapshot(ch, event.scopeId)
             if (current) {
@@ -195,7 +195,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
                 revision: event.revision,
                 current_schema_version: event.schemaVersion,
                 latest_metadata_json: event.metadataJson,
-                updated_at: event.createdAt.toJSON() as string
+                updated_at: eventOccurredAt(event)
               }]
             }).pipe(Effect.asVoid)
           }
@@ -203,7 +203,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
 
       onPersonalDataExtracted: (event: PersonalDataExtracted) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "PersonalDataExtracted", event.extractedAt.toJSON() as string, event.branchId, "", event)
+          yield* insertEvent(ch, event.profileId, event.revision, "PersonalDataExtracted", eventOccurredAt(event), event.branchId, "", event)
           const current = (yield* loadLatestProfile(ch, event.profileId)) ?? initialProfileRow(event.profileId)
           yield* ch.insertQuery({
             table: "profile_provider_profiles_current",
@@ -212,14 +212,14 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
               revision: event.revision,
               latest_pii_storage_key: event.piiStorageKey,
               pii_jurisdiction: event.jurisdiction,
-              updated_at: event.extractedAt.toJSON() as string
+              updated_at: eventOccurredAt(event)
             }]
           }).pipe(Effect.asVoid)
         }),
 
       onProfileBranchForked: (event: ProfileBranchForked) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "ProfileBranchForked", event.createdAt.toJSON() as string, event.branchId, "", event)
+          yield* insertEvent(ch, event.profileId, event.revision, "ProfileBranchForked", eventOccurredAt(event), event.branchId, "", event)
           const current = (yield* loadLatestProfile(ch, event.profileId)) ?? initialProfileRow(event.profileId)
           yield* ch.insertQuery({
             table: "profile_provider_profiles_current",
@@ -227,14 +227,14 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
               ...current,
               revision: event.revision,
               active_branch_id: event.branchId,
-              updated_at: event.createdAt.toJSON() as string
+              updated_at: eventOccurredAt(event)
             }]
           }).pipe(Effect.asVoid)
         }),
 
       onSnapshotPublishedProfile: (event: SnapshotPublishedProfile) =>
         Effect.gen(function* () {
-          yield* insertEvent(ch, event.profileId, event.revision, "SnapshotPublishedProfile", event.publishedAt.toJSON() as string, "", event.snapshotId, event)
+          yield* insertEvent(ch, event.profileId, event.revision, "SnapshotPublishedProfile", eventOccurredAt(event), "", event.snapshotId, event)
           const currentProfile = (yield* loadLatestProfile(ch, event.profileId)) ?? initialProfileRow(event.profileId)
           yield* ch.insertQuery({
             table: "profile_provider_profiles_current",
@@ -243,7 +243,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
               revision: event.revision,
               status: "published",
               published_snapshot_id: event.snapshotId,
-              updated_at: event.publishedAt.toJSON() as string
+              updated_at: eventOccurredAt(event)
             }]
           }).pipe(Effect.asVoid)
           const currentSnapshot = yield* loadLatestSnapshot(ch, event.snapshotId)
