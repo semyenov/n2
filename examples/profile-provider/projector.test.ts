@@ -9,7 +9,7 @@ import * as EventLogApi from "@effect/experimental/EventLog"
 import { ProfileDocument, type ProfileEvent } from "./contracts.js"
 import { ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderProjectionLayer } from "./projector.js"
-import { ProfileProviderProjectionStore, type ProjectionHandlers } from "./projection-store.js"
+import { makeDispatch, ProfileProviderProjectionStore, type ProjectionHandlers } from "./projection-store.js"
 import { ProfileProviderOutbox } from "./outbox.js"
 import type { ProfileProviderEventMessage } from "./workflows.js"
 
@@ -42,7 +42,7 @@ test("projector writes through the projection store and outbox without requiring
   const journalLayer = ExpEventJournal.layerMemory
   const identityLayer = Layer.succeed(Identity, Identity.makeRandom())
 
-  const noOpHandlers: ProjectionHandlers = {
+  const perEventHandlers: Omit<ProjectionHandlers, "dispatch"> = {
     onProfileCreated: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
     onMergedDataProfile: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
     onSnapshotCreatedProfile: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
@@ -51,6 +51,7 @@ test("projector writes through the projection store and outbox without requiring
     onProfileBranchForked: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
     onSnapshotPublishedProfile: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) })
   }
+  const noOpHandlers: ProjectionHandlers = { ...perEventHandlers, dispatch: makeDispatch(perEventHandlers) }
 
   const noOpOutbox = {
     enqueue: (message: ProfileProviderEventMessage) =>

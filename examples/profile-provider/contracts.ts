@@ -189,50 +189,49 @@ export class ProfileSnapshot extends Schema.Class<ProfileSnapshot>("ProfileSnaps
   strategyJson: Schema.String
 }) {}
 
+/** Common fields shared by all profile events. */
+const ProfileEventBase = {
+  profileId: ProfileId,
+  occurredAt: Schema.DateTimeUtc,
+  actorId: Schema.String,
+  revision: Schema.Number.pipe(Schema.int())
+}
+
 export class ProfileCreated extends Schema.TaggedClass<ProfileCreated>()(
   "ProfileCreated",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     ownerAgentId: Schema.String,
     branchId: Schema.String,
     schemaVersion: Schema.String,
     maskedProfileJson: ProfileDocument,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
-    summary: Schema.String,
-    revision: Schema.Number.pipe(Schema.int())
+    summary: Schema.String
   }
 ) {}
 
 export class MergedDataProfile extends Schema.TaggedClass<MergedDataProfile>()(
   "MergedDataProfile",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     branchId: Schema.String,
     schemaVersion: Schema.String,
     maskedProfileJson: ProfileDocument,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
     summary: Schema.String,
-    sourceCount: Schema.Number.pipe(Schema.int()),
-    revision: Schema.Number.pipe(Schema.int())
+    sourceCount: Schema.Number.pipe(Schema.int())
   }
 ) {}
 
 export class SnapshotCreatedProfile extends Schema.TaggedClass<SnapshotCreatedProfile>()(
   "SnapshotCreatedProfile",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     branchId: Schema.String,
     snapshotId: Schema.String,
     snapshotType: SnapshotType,
     profileJson: ProfileDocument,
     metadataJson: Schema.String,
     schemaVersion: Schema.String,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
-    summary: Schema.String,
-    revision: Schema.Number.pipe(Schema.int())
+    summary: Schema.String
   }
 ) {}
 
@@ -242,59 +241,47 @@ export type MetadataScope = typeof MetadataScope.Type
 export class MetaDataCreated extends Schema.TaggedClass<MetaDataCreated>()(
   "MetaDataCreated",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     branchId: Schema.String,
     scope: MetadataScope,
     scopeId: Schema.String,
     metadataJson: Schema.String,
-    schemaVersion: Schema.String,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
-    revision: Schema.Number.pipe(Schema.int())
+    schemaVersion: Schema.String
   }
 ) {}
 
 export class PersonalDataExtracted extends Schema.TaggedClass<PersonalDataExtracted>()(
   "PersonalDataExtracted",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     branchId: Schema.String,
     scope: MetadataScope,
     scopeId: Schema.String,
     piiStorageKey: Schema.String,
     piiJson: Schema.String,
-    jurisdiction: Schema.String,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
-    revision: Schema.Number.pipe(Schema.int())
+    jurisdiction: Schema.String
   }
 ) {}
 
 export class ProfileBranchForked extends Schema.TaggedClass<ProfileBranchForked>()(
   "ProfileBranchForked",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     branchId: Schema.String,
     label: Schema.String,
     baseBranchId: Schema.String,
     baseRevision: Schema.Number.pipe(Schema.int()),
     baseSnapshotId: Schema.String,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
-    summary: Schema.String,
-    revision: Schema.Number.pipe(Schema.int())
+    summary: Schema.String
   }
 ) {}
 
 export class SnapshotPublishedProfile extends Schema.TaggedClass<SnapshotPublishedProfile>()(
   "SnapshotPublishedProfile",
   {
-    profileId: ProfileId,
+    ...ProfileEventBase,
     snapshotId: Schema.String,
-    strategyJson: Schema.String,
-    occurredAt: Schema.DateTimeUtc,
-    actorId: Schema.String,
-    revision: Schema.Number.pipe(Schema.int())
+    strategyJson: Schema.String
   }
 ) {}
 

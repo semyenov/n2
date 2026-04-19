@@ -12,7 +12,7 @@ import type {
   ProfileBranchForked,
   SnapshotPublishedProfile
 } from "./contracts.js"
-import { ProfileProviderProjectionStore } from "./projection-store.js"
+import { makeDispatch, ProfileProviderProjectionStore, type ProjectionHandlers } from "./projection-store.js"
 
 type ProfileCurrentRow = {
   readonly profile_id: string
@@ -113,7 +113,7 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
   Effect.gen(function* () {
     const ch = yield* ClickhouseClient.ClickhouseClient
 
-    return {
+    const handlers: Omit<ProjectionHandlers, "dispatch"> = {
       onProfileCreated: (event: ProfileCreated) =>
         Effect.gen(function* () {
           yield* insertEvent(ch, event.profileId, event.revision, "ProfileCreated", String(event.occurredAt.toJSON()), event.branchId, "", event)
@@ -255,5 +255,6 @@ export const ProfileProviderProjectionStoreClickhouseLive = Layer.effect(
           }
         })
     }
+    return { ...handlers, dispatch: makeDispatch(handlers) }
   })
 )

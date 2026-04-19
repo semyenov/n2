@@ -34,18 +34,7 @@ const decodeEvent = makeEventDecoder<ProfileEvent>(ProfileProviderEventGroup, {
 })
 
 const dispatchToStore = (event: ProfileEvent) =>
-  Effect.gen(function* () {
-    const store = yield* ProfileProviderProjectionStore
-    switch (event._tag) {
-      case "ProfileCreated": return yield* store.onProfileCreated(event)
-      case "MergedDataProfile": return yield* store.onMergedDataProfile(event)
-      case "SnapshotCreatedProfile": return yield* store.onSnapshotCreatedProfile(event)
-      case "MetaDataCreated": return yield* store.onMetaDataCreated(event)
-      case "PersonalDataExtracted": return yield* store.onPersonalDataExtracted(event)
-      case "ProfileBranchForked": return yield* store.onProfileBranchForked(event)
-      case "SnapshotPublishedProfile": return yield* store.onSnapshotPublishedProfile(event)
-    }
-  })
+  Effect.flatMap(ProfileProviderProjectionStore, (store) => store.dispatch(event))
 
 const replay = makeReplayTool<ProfileEvent>({
   decodeEvent,

@@ -3,7 +3,7 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import { SqlClient } from "@effect/sql/SqlClient"
 import { ProfileDocument } from "./contracts.js"
-import { ProfileProviderProjectionStore } from "./projection-store.js"
+import { makeDispatch, ProfileProviderProjectionStore, type ProjectionHandlers } from "./projection-store.js"
 
 const encodeProfile = Schema.encodeSync(ProfileDocument)
 
@@ -12,7 +12,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
   Effect.gen(function* () {
     const sql = yield* SqlClient
 
-    return {
+    const handlers: Omit<ProjectionHandlers, "dispatch"> = {
       onProfileCreated: (event) =>
         sql`
           INSERT INTO profile_provider_profiles_read
@@ -120,7 +120,9 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
                 strategy_json = ${event.strategyJson}
             WHERE snapshot_id = ${event.snapshotId}
           `.pipe(Effect.asVoid)
-        })
+        }),
+
     }
+    return { ...handlers, dispatch: makeDispatch(handlers) }
   })
 )
