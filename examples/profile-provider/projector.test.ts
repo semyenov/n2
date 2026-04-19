@@ -1,0 +1,84 @@
+import { test, expect } from "bun:test"
+import * as DateTime from "effect/DateTime"
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import * as Schema from "effect/Schema"
+import * as ExpEventJournal from "@effect/experimental/EventJournal"
+import { Identity } from "@effect/experimental/EventLog"
+import * as EventLogApi from "@effect/experimental/EventLog"
+import { ProfileDocument, type ProfileEvent } from "./contracts.js"
+import { ProfileProviderEventLogSchema } from "./events.js"
+import { ProfileProviderProjectionLayer } from "./projector.js"
+import { ProfileProviderProjectionStore } from "./projection-store.js"
+import { type ProfileProviderEventMessage } from "./workflows.js"
+
+const decodeProfile = Schema.decodeUnknownSync(ProfileDocument)
+
+const makeProfile = (profileId: string) =>
+  decodeProfile({
+    uuid: profileId,
+    created_at: "2026-01-01T00:00:00.000Z",
+    user_data: {
+      personal_info: {
+        first_name: "Ada",
+        last_name: "Lovelace",
+        relevant_position: "Platform Engineer"
+      },
+      salary_expectations: {
+        currency: "USD",
+        amount_from: 1000
+      },
+      skills: [{ name: "TypeScript", level: "advanced" }],
+      education: [{ degree: "Bachelor", field_of_study: "Computer Science", institution: "Analytical Engine Institute" }]
+    },
+    user_meta_data: { version: 1 }
+  })
+
+test("projector writes through the projection store without requiring workflow services", async () => {
+  const profileId = "00000000-0000-4000-8000-000000000111"
+  const projected: Array<{ tag: ProfileEvent["_tag"]; messageId: string }> = []
+  const journalLayer = ExpEventJournal.layerMemory
+  const identityLayer = Layer.succeed(Identity, Identity.makeRandom())
+
+  const layer = Layer.mergeAll(
+    journalLayer,
+    identityLayer,
+    Layer.succeed(ProfileProviderProjectionStore, {
+      project: (event: ProfileEvent, message: ProfileProviderEventMessage) =>
+        Effect.sync(() => {
+          projected.push({ tag: event._tag, messageId: message.id })
+        })
+    }),
+    EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
+      Layer.provide(ProfileProviderProjectionLayer),
+      Layer.provide(Layer.merge(journalLayer, identityLayer))
+    )
+  )
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const publish = yield* EventLogApi.makeClient(ProfileProviderEventLogSchema)
+      yield* publish("ProfileCreated", {
+        profileId,
+        ownerAgentId: "agent-1",
+        branchId: "main",
+        schemaVersion: "1.0.0",
+        maskedProfileJson: makeProfile(profileId),
+        createdAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
+        createdBy: "agent-1",
+        summary: "init",
+        revision: 1
+      })
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(layer)
+    ) as Effect.Effect<void, never, never>
+  )
+
+  expect(projected).toEqual([
+    {
+      tag: "ProfileCreated",
+      messageId: `${profileId}:1:ProfileCreated`
+    }
+  ])
+})

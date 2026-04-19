@@ -1,15 +1,10 @@
 /**
  * Profile provider EventGroup — bridges domain events to the @effect/experimental EventLog system.
  *
- * EventGroup.empty.add(...) defines each event's tag, primaryKey, and payload schema.
- * The primaryKey determines which EventLog stream an event belongs to (one per profileId).
- *
- * This is separate from contracts.ts because EventGroup uses plain Schema.Struct fields
- * rather than Schema.TaggedClass instances. The payloads are structurally identical —
- * just not the same class objects.
- *
- * MetadataScope and SnapshotType are imported from contracts.ts (not redefined here)
- * so both files stay in sync on a single source of truth.
+ * Payload schemas are derived from the TaggedClass definitions in contracts.ts
+ * via `fieldsOf()`, which strips the `_tag` discriminant and produces a plain
+ * Schema.Struct. This keeps contracts.ts as the single source of truth — any
+ * field change there automatically flows to the EventGroup.
  *
  * ProfileProviderEventLogSchema is exported as a single instance shared by:
  *   - entity.ts  → EventLogApi.makeClient(ProfileProviderEventLogSchema)  (publish)
@@ -20,116 +15,57 @@
 import * as Schema from "effect/Schema"
 import { EventGroup } from "@effect/experimental"
 import * as EventLogApi from "@effect/experimental/EventLog"
-import { MetadataScope, ProfileDocument, SnapshotType } from "./contracts.js"
+import {
+  ProfileCreated,
+  MergedDataProfile,
+  SnapshotCreatedProfile,
+  MetaDataCreated,
+  PersonalDataExtracted,
+  ProfileBranchForked,
+  SnapshotPublishedProfile
+} from "./contracts.js"
 
-const ProfileId = Schema.UUID
+/** Extract payload fields from a TaggedClass (strips `_tag`), returning a Schema.Struct. */
+const fieldsOf = <F extends Schema.Struct.Fields & { _tag: any }>(cls: { fields: F }) => {
+  const { _tag: _, ...rest } = cls.fields
+  return Schema.Struct(rest as { [K in Exclude<keyof F, "_tag">]: F[K] })
+}
 
 export const ProfileProviderEventGroup = EventGroup.empty
   .add({
     tag: "ProfileCreated",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      ownerAgentId: Schema.String,
-      branchId: Schema.String,
-      schemaVersion: Schema.String,
-      maskedProfileJson: ProfileDocument,
-      createdAt: Schema.DateTimeUtc,
-      createdBy: Schema.String,
-      summary: Schema.String,
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(ProfileCreated)
   })
   .add({
     tag: "MergedDataProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      branchId: Schema.String,
-      schemaVersion: Schema.String,
-      maskedProfileJson: ProfileDocument,
-      mergedAt: Schema.DateTimeUtc,
-      mergedBy: Schema.String,
-      summary: Schema.String,
-      sourceCount: Schema.Number.pipe(Schema.int()),
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(MergedDataProfile)
   })
   .add({
     tag: "SnapshotCreatedProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      branchId: Schema.String,
-      snapshotId: Schema.String,
-      snapshotType: SnapshotType,
-      profileJson: ProfileDocument,
-      metadataJson: Schema.String,
-      schemaVersion: Schema.String,
-      createdAt: Schema.DateTimeUtc,
-      createdBy: Schema.String,
-      summary: Schema.String,
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(SnapshotCreatedProfile)
   })
   .add({
     tag: "MetaDataCreated",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      branchId: Schema.String,
-      scope: MetadataScope,
-      scopeId: Schema.String,
-      metadataJson: Schema.String,
-      schemaVersion: Schema.String,
-      createdAt: Schema.DateTimeUtc,
-      createdBy: Schema.String,
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(MetaDataCreated)
   })
   .add({
     tag: "PersonalDataExtracted",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      branchId: Schema.String,
-      scope: MetadataScope,
-      scopeId: Schema.String,
-      piiStorageKey: Schema.String,
-      piiJson: Schema.String,
-      jurisdiction: Schema.String,
-      extractedAt: Schema.DateTimeUtc,
-      extractedBy: Schema.String,
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(PersonalDataExtracted)
   })
   .add({
     tag: "ProfileBranchForked",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      branchId: Schema.String,
-      label: Schema.String,
-      baseBranchId: Schema.String,
-      baseRevision: Schema.Number.pipe(Schema.int()),
-      baseSnapshotId: Schema.String,
-      createdAt: Schema.DateTimeUtc,
-      createdBy: Schema.String,
-      summary: Schema.String,
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(ProfileBranchForked)
   })
   .add({
     tag: "SnapshotPublishedProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: Schema.Struct({
-      profileId: ProfileId,
-      snapshotId: Schema.String,
-      strategyJson: Schema.String,
-      publishedAt: Schema.DateTimeUtc,
-      publishedBy: Schema.String,
-      revision: Schema.Number.pipe(Schema.int())
-    })
+    payload: fieldsOf(SnapshotPublishedProfile)
   })
 
 export const ProfileProviderEventLogSchema = EventLogApi.schema(ProfileProviderEventGroup)

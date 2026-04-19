@@ -30,7 +30,8 @@ export {
   define,
   type Definition,
   type EntityAdapterOptions,
-  type RpcAdapterOptions
+  type RpcAdapterOptions,
+  type StatefulRpcAdapterOptions
 } from "./Definition.js"
 
 export {

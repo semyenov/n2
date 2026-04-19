@@ -15,11 +15,15 @@ import { Identity } from "@effect/experimental/EventLog"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { ClusterWorkflowEngine } from "@effect/cluster"
 import {
+  ProfileProviderClickhouseBootstrapLayer,
+} from "./clickhouse-schema.js"
+import { ProfileProviderClickhouseLayer } from "./clickhouse.js"
+import {
   ProfileProviderOutboxPgLive,
   ProfileProviderOutboxWorkerLive
 } from "./outbox.js"
 import { WorkflowEngine } from "@effect/workflow"
-import { ProfileProviderProjectionStorePgLive } from "./projection-store-pg.js"
+import { ProfileProviderProjectionStoreClickhouseLive } from "./projection-store-clickhouse.js"
 import { ProfileProviderProjectionLayer } from "./projector.js"
 import { ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderSnapshotsLive } from "./snapshots.js"
@@ -30,6 +34,12 @@ import {
 
 const identityLayer   = Layer.succeed(Identity, Identity.makeRandom())
 const sqlJournalLayer = SqlEventJournal.layer()
+const clickhouseLayer = ProfileProviderClickhouseLayer
+const clickhouseReadyLayer = Layer.merge(
+  clickhouseLayer,
+  Layer.provide(ProfileProviderClickhouseBootstrapLayer, clickhouseLayer)
+)
+const projectionStoreLayer = Layer.provide(ProfileProviderProjectionStoreClickhouseLive, clickhouseReadyLayer)
 
 export const WorkflowLayer = Layer.provideMerge(
   ProfileProviderEventPublishHandlers,
@@ -42,7 +52,7 @@ export const ClusterWorkflowLayer = Layer.provideMerge(
 )
 
 const EventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
-  Layer.provide(Layer.provide(ProfileProviderProjectionLayer, ProfileProviderProjectionStorePgLive)),
+  Layer.provide(Layer.provide(ProfileProviderProjectionLayer, projectionStoreLayer)),
   Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
 )
 

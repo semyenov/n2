@@ -1,30 +1,30 @@
 /**
- * Profile provider aggregate — pure business logic, no framework.
+ * Profile provider aggregate — pure business logic using N2.define().
  *
- * Three plain functions implement the event-sourced state machine:
- *
- *   evolve : (state, event)   → state                    — pure fold, no effects
- *   decide : (state, command) → Effect<events, ProfileError>  — guards + domain rules
- *   handle : (state, command) → Effect<{events, state}>  — decide then evolve
+ * N2.define<Event, Command>()({...}) provides:
+ *   - Exhaustive compile-time checking for evolve (all events) and decide (all commands)
+ *   - Derived handle() and run() functions
  *
  * GetProfile and GetProfileHistory reach decide but return [] — they are read
  * queries handled directly by the entity layer and never run through this path.
  *
- * sourceAssets are merged in handle() (not evolve) because asset deduplication
- * is not event-sourced state — it is a side-effect of ingestion and does not
- * need to be replayed from the event log.
+ * sourceAssets are merged in handleWithAssets() (not evolve) because asset
+ * deduplication is not event-sourced state — it is a side-effect of ingestion
+ * and does not need to be replayed from the event log.
  *
  * Helper functions (hasMeaningfulPii, appendRevision, metadataEvent, piiEvent)
  * keep individual decide cases short and avoid parameter repetition.
  */
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
+import * as N2 from "../../src/framework/helpers/index.js"
 import {
   type ProfileCommand,
   type ProfileEvent,
   type ProfileState,
   type MetadataScope,
   initialProfileState,
+  ProfileProviderCommands,
   ProfileError,
   ProfileCreated,
   MergedDataProfile,
@@ -35,12 +35,7 @@ import {
   SnapshotPublishedProfile,
   ProfileBranch,
   ProfileRevisionEntry,
-  ProfileSnapshot,
-  CreateProfile,
-  MergeProfileData,
-  ForkProfileBranch,
-  CreateProfileSnapshot,
-  PublishProfileSnapshot
+  ProfileSnapshot
 } from "./contracts.js"
 
 export { initialProfileState }
@@ -83,16 +78,8 @@ const ensureProfileIdMatches = (
   candidateProfileId === profileId
     ? Effect.void
     : new ProfileError({
-        message: `${fieldName}.uuid must match profileId "${profileId}"`
-      })
-
-const mergeSourceAssets = (current: ProfileState["sourceAssets"], incoming: ProfileState["sourceAssets"]) => {
-  const next = new Map(current.map((asset) => [asset.sourceId, asset]))
-  for (const asset of incoming) {
-    next.set(asset.sourceId, asset)
-  }
-  return Array.from(next.values())
-}
+      message: `${fieldName}.uuid must match profileId "${profileId}"`
+    })
 
 const nextRevision = (state: ProfileState, offset: number) => state.revision + offset + 1
 
@@ -144,9 +131,11 @@ const piiEvent = (
     revision: nextRevision(state, offset)
   })
 
-export const evolve = (state: ProfileState, event: ProfileEvent): ProfileState => {
-  switch (event._tag) {
-    case "ProfileCreated": {
+export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
+  initialState: initialProfileState,
+  commands: ProfileProviderCommands.constructors,
+  evolve: {
+    ProfileCreated: (state, event) => {
       const branch = new ProfileBranch({
         branchId: event.branchId,
         label: "main",
@@ -176,155 +165,143 @@ export const evolve = (state: ProfileState, event: ProfileEvent): ProfileState =
         ),
         revision: event.revision
       }
-    }
-    case "MergedDataProfile":
-      return {
-        ...state,
-        status: "draft" as const,
-        activeBranchId: event.branchId,
-        currentSchemaVersion: event.schemaVersion,
-        maskedProfileJson: event.maskedProfileJson,
-        revisions: appendRevision(
-          state,
-          event.revision,
-          event.branchId,
-          event._tag,
-          event.summary,
-          event.mergedAt,
-          event.mergedBy
-        ),
-        revision: event.revision
-      }
-    case "SnapshotCreatedProfile":
-      return {
-        ...state,
-        activeBranchId: event.branchId,
-        currentSchemaVersion: event.schemaVersion,
-        snapshots: [
-          ...state.snapshots,
-          new ProfileSnapshot({
-            snapshotId: event.snapshotId,
-            branchId: event.branchId,
-            revision: event.revision,
-            snapshotType: event.snapshotType,
-            profileJson: event.profileJson,
-            metadataJson: event.metadataJson,
-            schemaVersion: event.schemaVersion,
-            summary: event.summary,
-            createdAt: event.createdAt,
-            createdBy: event.createdBy,
-            published: false,
-            strategyJson: ""
-          })
-        ],
-        revisions: appendRevision(
-          state,
-          event.revision,
-          event.branchId,
-          event._tag,
-          event.summary,
-          event.createdAt,
-          event.createdBy
-        ),
-        revision: event.revision
-      }
-    case "MetaDataCreated":
-      return {
-        ...state,
-        latestMetadataJson: event.metadataJson,
-        currentSchemaVersion: event.schemaVersion,
-        activeBranchId: event.branchId,
-        snapshots: state.snapshots.map((snapshot) =>
-          event.scope === "snapshot" && snapshot.snapshotId === event.scopeId
-            ? new ProfileSnapshot({ ...snapshot, metadataJson: event.metadataJson, schemaVersion: event.schemaVersion })
-            : snapshot
-        ),
-        revisions: appendRevision(
-          state,
-          event.revision,
-          event.branchId,
-          event._tag,
-          `${event.scope}:${event.scopeId}`,
-          event.createdAt,
-          event.createdBy
-        ),
-        revision: event.revision
-      }
-    case "PersonalDataExtracted":
-      return {
-        ...state,
-        latestPiiStorageKey: event.piiStorageKey,
-        piiJurisdiction: event.jurisdiction,
-        activeBranchId: event.branchId,
-        revisions: appendRevision(
-          state,
-          event.revision,
-          event.branchId,
-          event._tag,
-          `${event.scope}:${event.scopeId}`,
-          event.extractedAt,
-          event.extractedBy
-        ),
-        revision: event.revision
-      }
-    case "ProfileBranchForked":
-      return {
-        ...state,
-        activeBranchId: event.branchId,
-        branches: [
-          ...state.branches,
-          new ProfileBranch({
-            branchId: event.branchId,
-            label: event.label,
-            baseBranchId: event.baseBranchId,
-            baseRevision: event.baseRevision,
-            baseSnapshotId: event.baseSnapshotId,
-            createdAt: event.createdAt,
-            createdBy: event.createdBy
-          })
-        ],
-        revisions: appendRevision(
-          state,
-          event.revision,
-          event.branchId,
-          event._tag,
-          event.summary,
-          event.createdAt,
-          event.createdBy
-        ),
-        revision: event.revision
-      }
-    case "SnapshotPublishedProfile":
-      return {
-        ...state,
-        status: "published" as const,
-        publishedSnapshotId: event.snapshotId,
-        snapshots: state.snapshots.map((snapshot) =>
-          snapshot.snapshotId === event.snapshotId
-            ? new ProfileSnapshot({ ...snapshot, published: true, strategyJson: event.strategyJson })
-            : snapshot
-        ),
-        revisions: appendRevision(
-          state,
-          event.revision,
-          state.activeBranchId,
-          event._tag,
-          event.snapshotId,
-          event.publishedAt,
-          event.publishedBy
-        ),
-        revision: event.revision
-      }
-  }
-}
-
-export const decide = (
-  state: ProfileState,
-  command: ProfileCommand
-): Effect.Effect<ReadonlyArray<ProfileEvent>, ProfileError> => {
-  switch (command._tag) {
-    case "CreateProfile":
-      return Effect.gen(function* () {
+    },
+    MergedDataProfile: (state, event) => ({
+      ...state,
+      status: "draft" as const,
+      activeBranchId: event.branchId,
+      currentSchemaVersion: event.schemaVersion,
+      maskedProfileJson: event.maskedProfileJson,
+      revisions: appendRevision(
+        state,
+        event.revision,
+        event.branchId,
+        event._tag,
+        event.summary,
+        event.mergedAt,
+        event.mergedBy
+      ),
+      revision: event.revision
+    }),
+    SnapshotCreatedProfile: (state, event) => ({
+      ...state,
+      activeBranchId: event.branchId,
+      currentSchemaVersion: event.schemaVersion,
+      snapshots: [
+        ...state.snapshots,
+        new ProfileSnapshot({
+          snapshotId: event.snapshotId,
+          branchId: event.branchId,
+          revision: event.revision,
+          snapshotType: event.snapshotType,
+          profileJson: event.profileJson,
+          metadataJson: event.metadataJson,
+          schemaVersion: event.schemaVersion,
+          summary: event.summary,
+          createdAt: event.createdAt,
+          createdBy: event.createdBy,
+          published: false,
+          strategyJson: ""
+        })
+      ],
+      revisions: appendRevision(
+        state,
+        event.revision,
+        event.branchId,
+        event._tag,
+        event.summary,
+        event.createdAt,
+        event.createdBy
+      ),
+      revision: event.revision
+    }),
+    MetaDataCreated: (state, event) => ({
+      ...state,
+      latestMetadataJson: event.metadataJson,
+      currentSchemaVersion: event.schemaVersion,
+      activeBranchId: event.branchId,
+      snapshots: state.snapshots.map((snapshot) =>
+        event.scope === "snapshot" && snapshot.snapshotId === event.scopeId
+          ? new ProfileSnapshot({ ...snapshot, metadataJson: event.metadataJson, schemaVersion: event.schemaVersion })
+          : snapshot
+      ),
+      revisions: appendRevision(
+        state,
+        event.revision,
+        event.branchId,
+        event._tag,
+        `${event.scope}:${event.scopeId}`,
+        event.createdAt,
+        event.createdBy
+      ),
+      revision: event.revision
+    }),
+    PersonalDataExtracted: (state, event) => ({
+      ...state,
+      latestPiiStorageKey: event.piiStorageKey,
+      piiJurisdiction: event.jurisdiction,
+      activeBranchId: event.branchId,
+      revisions: appendRevision(
+        state,
+        event.revision,
+        event.branchId,
+        event._tag,
+        `${event.scope}:${event.scopeId}`,
+        event.extractedAt,
+        event.extractedBy
+      ),
+      revision: event.revision
+    }),
+    ProfileBranchForked: (state, event) => ({
+      ...state,
+      activeBranchId: event.branchId,
+      branches: [
+        ...state.branches,
+        new ProfileBranch({
+          branchId: event.branchId,
+          label: event.label,
+          baseBranchId: event.baseBranchId,
+          baseRevision: event.baseRevision,
+          baseSnapshotId: event.baseSnapshotId,
+          createdAt: event.createdAt,
+          createdBy: event.createdBy
+        })
+      ],
+      revisions: appendRevision(
+        state,
+        event.revision,
+        event.branchId,
+        event._tag,
+        event.summary,
+        event.createdAt,
+        event.createdBy
+      ),
+      revision: event.revision
+    }),
+    SnapshotPublishedProfile: (state, event) => ({
+      ...state,
+      status: "published" as const,
+      publishedSnapshotId: event.snapshotId,
+      snapshots: state.snapshots.map((snapshot) =>
+        snapshot.snapshotId === event.snapshotId
+          ? new ProfileSnapshot({ ...snapshot, published: true, strategyJson: event.strategyJson })
+          : snapshot
+      ),
+      revisions: appendRevision(
+        state,
+        event.revision,
+        state.activeBranchId,
+        event._tag,
+        event.snapshotId,
+        event.publishedAt,
+        event.publishedBy
+      ),
+      revision: event.revision
+    })
+  },
+  decide: {
+    CreateProfile: (state, command) =>
+      Effect.gen(function* () {
         if (state.status !== "empty") {
           return yield* new ProfileError({ message: "Profile already exists" })
         }
@@ -369,10 +346,10 @@ export const decide = (
           }))
         }
         return events
-      })
+      }),
 
-    case "MergeProfileData":
-      return Effect.gen(function* () {
+    MergeProfileData: (state, command) =>
+      Effect.gen(function* () {
         if (state.status === "empty") {
           return yield* new ProfileError({ message: "Profile does not exist" })
         }
@@ -422,10 +399,10 @@ export const decide = (
           )
         }
         return events
-      })
+      }),
 
-    case "ForkProfileBranch":
-      return Effect.gen(function* () {
+    ForkProfileBranch: (state, command) =>
+      Effect.gen(function* () {
         if (state.status === "empty") {
           return yield* new ProfileError({ message: "Profile does not exist" })
         }
@@ -464,10 +441,10 @@ export const decide = (
             1
           )
         ]
-      })
+      }),
 
-    case "CreateProfileSnapshot":
-      return Effect.gen(function* () {
+    CreateProfileSnapshot: (state, command) =>
+      Effect.gen(function* () {
         if (state.status === "empty") {
           return yield* new ProfileError({ message: "Profile does not exist" })
         }
@@ -522,10 +499,10 @@ export const decide = (
           )
         }
         return events
-      })
+      }),
 
-    case "PublishProfileSnapshot":
-      return Effect.gen(function* () {
+    PublishProfileSnapshot: (state, command) =>
+      Effect.gen(function* () {
         if (state.status === "empty") {
           return yield* new ProfileError({ message: "Profile does not exist" })
         }
@@ -554,25 +531,11 @@ export const decide = (
             1
           )
         ]
-      })
+      }),
 
-    case "GetProfile":
-    case "GetProfileHistory":
-      return Effect.succeed([])
+    GetProfile: (_state, _command) => Effect.succeed([]),
+    GetProfileHistory: (_state, _command) => Effect.succeed([])
   }
-}
+})
 
-export const handle = (state: ProfileState, command: ProfileCommand) =>
-  Effect.gen(function* () {
-    const events = yield* decide(state, command)
-    let nextState = events.reduce(evolve, state)
-
-    if (command._tag === "CreateProfile" || command._tag === "MergeProfileData") {
-      nextState = {
-        ...nextState,
-        sourceAssets: mergeSourceAssets(nextState.sourceAssets, command.sources)
-      }
-    }
-
-    return { events, state: nextState }
-  })
+export const { evolve, decide, handle, initialState: _initialState } = ProfileProvider

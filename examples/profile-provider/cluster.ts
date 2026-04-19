@@ -9,6 +9,15 @@ import { ProfileProviderEntityLayer, ProfileProviderProxyHandlers, ProfileProvid
 import { ClusterInfrastructureLayer } from "./layers.js"
 import { MigrationsLayer } from "./migrate.js"
 
+/**
+ * Run with both databases configured:
+ *   DATABASE_URL=postgres://...
+ *   CLICKHOUSE_URL=http://localhost:8123
+ *
+ * PostgreSQL backs sharding, snapshots, event journal, and outbox.
+ * ClickHouse backs read projections.
+ */
+
 const ProfileProviderRpcRoute = RpcServer
   .layerHttpRouter({ 
     group: ProfileProviderProxyRpcs,

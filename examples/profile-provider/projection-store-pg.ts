@@ -3,37 +3,11 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import { SqlClient, type SqlClient as SqlClientInstance } from "@effect/sql/SqlClient"
 import { type ProfileEvent, ProfileDocument } from "./contracts.js"
+import { ProfileProviderOutbox } from "./outbox.js"
 import { ProfileProviderProjectionStore } from "./projection-store.js"
 import type { ProfileProviderEventMessage } from "./workflows.js"
 
 const encodeProfile = Schema.encodeSync(ProfileDocument)
-
-const insertOutbox = (sql: SqlClientInstance, message: ProfileProviderEventMessage) =>
-  {
-    const now = new Date().toISOString()
-    return sql`
-      INSERT INTO profile_provider_event_outbox
-      (id, profile_id, revision, topic, partition_key, occurred_at, payload_json, headers_json, status, retry_count, last_error, created_at, updated_at, published_at, next_attempt_at)
-      VALUES (
-        ${message.id},
-        ${message.profileId},
-        ${message.revision},
-        ${message.topic},
-        ${message.partitionKey},
-        ${message.occurredAt},
-        ${JSON.stringify(message.payload)},
-        ${JSON.stringify(message.headers)},
-        ${"pending"},
-        ${0},
-        ${""},
-        ${now},
-        ${now},
-        ${""},
-        ${""}
-      )
-      ON CONFLICT (id) DO NOTHING
-    `.pipe(Effect.asVoid)
-  }
 
 const projectEvent = (sql: SqlClientInstance, event: ProfileEvent) => {
   switch (event._tag) {
@@ -161,12 +135,13 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
   ProfileProviderProjectionStore,
   Effect.gen(function* () {
     const sql = yield* SqlClient
+    const outbox = yield* ProfileProviderOutbox
 
     return {
       project: (event: ProfileEvent, message: ProfileProviderEventMessage) =>
         sql.withTransaction(Effect.gen(function* () {
           yield* projectEvent(sql, event)
-          yield* insertOutbox(sql, message)
+          yield* outbox.enqueue(message)
         }))
     }
   })

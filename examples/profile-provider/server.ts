@@ -1,7 +1,7 @@
 /**
  * Dev server — in-memory state, no cluster overhead.
  *
- * Run: PORT=4100 bun examples/profile-provider/server.ts
+ * Run: DATABASE_URL=postgres://... CLICKHOUSE_URL=http://localhost:8123 PORT=4100 bun examples/profile-provider/server.ts
  * Test:
  *   curl -s http://localhost:4100/health
  *   curl -s -X POST http://localhost:4100/rpc/profile-provider \
@@ -12,6 +12,9 @@
  *   protocol: "http"          — use HTTP request/response (not WebSocket)
  *   RpcSerialization.layerJsonRpc() — translate standard JSON-RPC 2.0
  *     {jsonrpc,method,params,id} ↔ @effect/rpc internal format
+ *
+ * ClickHouse is required for read projections.
+ * PostgreSQL remains the source for snapshots, event journal, and outbox.
  */
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"

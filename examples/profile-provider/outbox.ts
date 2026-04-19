@@ -31,6 +31,7 @@ type OutboxRow = {
 export class ProfileProviderOutbox extends Context.Tag("ProfileProviderOutbox")<
   ProfileProviderOutbox,
   {
+    readonly enqueue: (message: ProfileProviderEventMessage) => Effect.Effect<void, SqlError>
     readonly claimPending: (limit: number) => Effect.Effect<ReadonlyArray<OutboxEntry>, SqlError>
     readonly markDispatched: (id: string) => Effect.Effect<void, SqlError>
     readonly markFailed: (id: string, retryCount: number, error: string) => Effect.Effect<void, SqlError>
@@ -82,12 +83,39 @@ const claimPending = (sql: SqlClientInstance, limit: number) => {
   )
 }
 
+const enqueue = (sql: SqlClientInstance, message: ProfileProviderEventMessage) => {
+  const now = nowIso()
+  return sql`
+    INSERT INTO profile_provider_event_outbox
+      (id, profile_id, revision, topic, partition_key, occurred_at, payload_json, headers_json, status, retry_count, last_error, created_at, updated_at, published_at, next_attempt_at)
+    VALUES (
+      ${message.id},
+      ${message.profileId},
+      ${message.revision},
+      ${message.topic},
+      ${message.partitionKey},
+      ${message.occurredAt},
+      ${JSON.stringify(message.payload)},
+      ${JSON.stringify(message.headers)},
+      ${"pending"},
+      ${0},
+      ${""},
+      ${now},
+      ${now},
+      ${""},
+      ${""}
+    )
+    ON CONFLICT (id) DO NOTHING
+  `.pipe(Effect.asVoid)
+}
+
 export const ProfileProviderOutboxPgLive = Layer.effect(
   ProfileProviderOutbox,
   Effect.gen(function* () {
     const sql = yield* SqlClient
 
     return {
+      enqueue: (message: ProfileProviderEventMessage) => enqueue(sql, message),
       claimPending: (limit: number) => claimPending(sql, limit),
       markDispatched: (id: string) => {
         const now = nowIso()
@@ -122,7 +150,7 @@ export const ProfileProviderOutboxPgLive = Layer.effect(
 const BATCH_SIZE = 50
 const IDLE_DELAY = "1 second"
 
-const drainBatch = Effect.gen(function* () {
+export const drainProfileProviderOutboxOnce = Effect.gen(function* () {
   const outbox = yield* ProfileProviderOutbox
   const entries = yield* outbox.claimPending(BATCH_SIZE)
 
@@ -152,7 +180,7 @@ const drainBatch = Effect.gen(function* () {
 })
 
 const outboxWorkerLoop: Effect.Effect<never, never, ProfileProviderOutbox> = Effect.gen(function* () {
-  const hadWork = yield* drainBatch.pipe(
+  const hadWork = yield* drainProfileProviderOutboxOnce.pipe(
     Effect.catchAll((error) =>
       Effect.logError("[profile-provider] outbox worker storage failure").pipe(
         Effect.annotateLogs({ error: String(error) }),

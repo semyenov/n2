@@ -6,7 +6,10 @@
  */
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Metric from "effect/Metric"
+import * as Option from "effect/Option"
 import * as Ref from "effect/Ref"
+import * as SynchronizedRef from "effect/SynchronizedRef"
 import type { DurationInput } from "effect/Duration"
 import { HttpLayerRouter } from "@effect/platform"
 import { Entity, type Sharding } from "@effect/cluster"
@@ -111,6 +114,75 @@ export interface EntityAdapterOptions<State, Command, Event, Result, MappedErr> 
     readonly state: State
   }) => Result
   readonly toError: (error: unknown) => MappedErr
+  /** Load/save snapshots. Snapshot loading restores state on entity init. */
+  readonly snapshots?: {
+    readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, any>
+    readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, any>
+    readonly every: number
+  }
+  /** Transform state after handle() succeeds (pure, sync). Use for non-event-sourced side effects. */
+  readonly postHandle?: (ctx: {
+    readonly entityId: string
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => State
+  /** Fire-and-forget side effect after state is committed. Use for event publishing. */
+  readonly afterCommit?: (ctx: {
+    readonly entityId: string
+    readonly revision: number
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => Effect.Effect<void, unknown, any>
+  /** Override specific command handlers (e.g. read queries). Bypasses dispatch entirely. */
+  readonly overrides?: {
+    readonly [tag: string]: (
+      request: { readonly payload: unknown },
+      ctx: { readonly entityId: string; readonly getState: Effect.Effect<State> }
+    ) => Effect.Effect<any, any, any>
+  }
+}
+
+/** Options for stateful multi-entity RPC handlers (dev/test mode). */
+export interface StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr> {
+  /** Extract entity ID from a command. */
+  readonly entityId: (command: Command) => string
+  readonly toResult: (ctx: {
+    readonly entityId: string
+    readonly revision: number
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => Result
+  readonly toError: (error: unknown) => MappedErr
+  readonly snapshots?: {
+    readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, any>
+    readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, any>
+    readonly every: number
+  }
+  readonly postHandle?: (ctx: {
+    readonly entityId: string
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => State
+  readonly afterCommit?: (ctx: {
+    readonly entityId: string
+    readonly revision: number
+    readonly command: Command
+    readonly events: ReadonlyArray<Event>
+    readonly state: State
+  }) => Effect.Effect<void, unknown, any>
+  /** Auto-instrument with counters and timers: `${prefix}.commands.total`, `${prefix}.commands.errors`, `${prefix}.command.duration_ms`. */
+  readonly metrics?: { readonly prefix: string }
+  /** Override specific command handlers (e.g. read queries). */
+  readonly overrides?: {
+    readonly [tag: string]: (
+      payload: unknown,
+      ctx: { readonly entityId: string; readonly getState: (entityId: string) => Effect.Effect<State, unknown, any> }
+    ) => Effect.Effect<any, any, any>
+  }
 }
 
 /** Options for mapping execution results when wiring to stateless RPC handlers. */
@@ -172,6 +244,10 @@ export interface Definition<
   readonly toRpcHandlers: <Rpcs extends Rpc.Any, Result, MappedErr>(
     group: RpcGroup.RpcGroup<Rpcs>,
     options: RpcAdapterOptions<State, Command, Event, Result, MappedErr>
+  ) => Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
+  readonly toStatefulRpcHandlers: <Rpcs extends Rpc.Any, Result, MappedErr>(
+    group: RpcGroup.RpcGroup<Rpcs>,
+    options: StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
   ) => Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
   readonly toHttpRoute: <Rpcs extends Rpc.Any>(
     group: RpcGroup.RpcGroup<Rpcs>,
@@ -274,14 +350,32 @@ export const define = <
       entity.toLayer(
         Effect.gen(function* () {
           const address = yield* Entity.CurrentAddress
-          const stateRef = yield* Ref.make(options.initialState)
-          let revision = 0
+
+          const initial = adapter.snapshots
+            ? yield* adapter.snapshots.load(address.entityId).pipe(
+                Effect.orElse(() => Effect.succeed(Option.none<{ readonly state: State; readonly revision: number }>()))
+              )
+            : Option.none<{ readonly state: State; readonly revision: number }>()
+
+          const stateRef = yield* Ref.make(
+            Option.match(initial, { onNone: () => options.initialState, onSome: ({ state }) => state })
+          )
+          let revision = Option.match(initial, { onNone: () => 0, onSome: ({ revision: r }) => r })
 
           const handlers: Partial<Entity.HandlersFrom<Rpcs>> = {}
 
           for (const tag of commandTags(options.commands)) {
-            const CommandCtor = commandsByTag[tag]
             const handlerTag = tag as keyof Entity.HandlersFrom<Rpcs>
+
+            if (adapter.overrides?.[tag]) {
+              const override = adapter.overrides[tag]
+              handlers[handlerTag] = ((request: { readonly payload: unknown }) =>
+                override(request, { entityId: address.entityId, getState: Ref.get(stateRef) })
+              ) as Entity.HandlersFrom<Rpcs>[typeof handlerTag]
+              continue
+            }
+
+            const CommandCtor = commandsByTag[tag]
             handlers[handlerTag] = ((request: { readonly payload: unknown }) =>
               Effect.gen(function* () {
                 const state = yield* Ref.get(stateRef)
@@ -293,15 +387,34 @@ export const define = <
                       Effect.fail(adapter.toError(error)),
                     onSuccess: (result) =>
                       Effect.gen(function* () {
-                        yield* Ref.set(stateRef, result.state)
+                        let finalState = result.state
+                        if (adapter.postHandle) {
+                          finalState = adapter.postHandle({
+                            entityId: address.entityId, command, events: result.events, state: result.state
+                          })
+                        }
+                        yield* Ref.set(stateRef, finalState)
                         revision += result.events.length
+
+                        if (adapter.snapshots && revision > 0 && revision % adapter.snapshots.every === 0) {
+                          yield* adapter.snapshots.save(address.entityId, finalState, revision).pipe(
+                            Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
+                            Effect.ignore
+                          )
+                        }
+
+                        if (adapter.afterCommit && result.events.length > 0) {
+                          yield* adapter.afterCommit({
+                            entityId: address.entityId, revision, command, events: result.events, state: finalState
+                          }).pipe(Effect.ignore)
+                        }
 
                         return adapter.toResult({
                           entityId: address.entityId,
                           revision,
                           command,
                           events: result.events,
-                          state: result.state
+                          state: finalState
                         })
                       })
                   })
@@ -361,6 +474,140 @@ export const define = <
       ) as Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
     }
 
+    type StateEntry = { readonly state: State; readonly revision: number }
+
+    const toStatefulRpcHandlers = <
+      Rpcs extends Rpc.Any,
+      Result,
+      MappedErr
+    >(
+      group: RpcGroup.RpcGroup<Rpcs>,
+      adapter: StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
+    ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R> => {
+      const metrics = adapter.metrics
+        ? {
+            total: Metric.counter(`${adapter.metrics.prefix}.commands.total`, { incremental: true }),
+            errors: Metric.counter(`${adapter.metrics.prefix}.commands.errors`, { incremental: true }),
+            latency: Metric.timer(`${adapter.metrics.prefix}.command.duration_ms`, "milliseconds")
+          }
+        : undefined
+
+      return group.toLayer(
+        Effect.gen(function* () {
+          const store = yield* SynchronizedRef.make(new Map<string, StateEntry>())
+
+          const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, unknown, any> => {
+            if (map.has(entityId)) return Effect.succeed(map.get(entityId)!)
+            if (!adapter.snapshots) return Effect.succeed({ state: options.initialState, revision: 0 })
+            return adapter.snapshots.load(entityId).pipe(
+              Effect.map(Option.getOrElse(() => ({ state: options.initialState, revision: 0 }))),
+              Effect.orElse(() => Effect.succeed({ state: options.initialState, revision: 0 }))
+            )
+          }
+
+          const getState = (entityId: string): Effect.Effect<State, unknown, any> =>
+            SynchronizedRef.get(store).pipe(
+              Effect.flatMap((map) => getOrLoad(map, entityId)),
+              Effect.map(({ state }) => state)
+            )
+
+          const handlers: Partial<RpcGroup.HandlersFrom<Rpcs>> = {}
+
+          for (const tag of commandTags(options.commands)) {
+            const handlerTag = tag as keyof RpcGroup.HandlersFrom<Rpcs>
+
+            if (adapter.overrides?.[tag]) {
+              const override = adapter.overrides[tag]
+              handlers[handlerTag] = ((payload: unknown) => {
+                const command = instantiateCommand(commandsByTag[tag], payload)
+                const entityId = adapter.entityId(command)
+                return override(payload, { entityId, getState })
+              }) as RpcGroup.HandlersFrom<Rpcs>[typeof handlerTag]
+              continue
+            }
+
+            const CommandCtor = commandsByTag[tag]
+            handlers[handlerTag] = ((payload: unknown) => {
+              const command = instantiateCommand(CommandCtor, payload)
+              const entityId = adapter.entityId(command)
+
+              const run = Effect.gen(function* () {
+                const [result, events, finalState, nextRevision] = yield* SynchronizedRef.modifyEffect(store, (map) =>
+                  getOrLoad(map, entityId).pipe(
+                    Effect.flatMap(({ state, revision: prevRevision }) =>
+                      handle(state, command).pipe(
+                        Effect.mapError((error) => adapter.toError(error)),
+                        Effect.map(({ events, state: next }) => {
+                          let finalState = next
+                          if (adapter.postHandle) {
+                            finalState = adapter.postHandle({
+                              entityId, command, events, state: next
+                            })
+                          }
+                          const nextRevision = prevRevision + events.length
+                          const nextMap = new Map(map).set(entityId, { state: finalState, revision: nextRevision })
+                          return [
+                            [
+                              adapter.toResult({
+                                entityId,
+                                revision: nextRevision,
+                                command,
+                                events,
+                                state: finalState
+                              }),
+                              events,
+                              finalState,
+                              nextRevision
+                            ] as const,
+                            nextMap
+                          ] as const
+                        })
+                      )
+                    )
+                  )
+                )
+
+                if (adapter.afterCommit && events.length > 0) {
+                  yield* adapter.afterCommit({
+                    entityId,
+                    revision: nextRevision,
+                    command,
+                    events,
+                    state: finalState
+                  }).pipe(
+                    Effect.tapError((e) => Effect.logError(`afterCommit failed: ${String(e)}`)),
+                    Effect.ignore
+                  )
+                }
+
+                if (adapter.snapshots && nextRevision > 0 && nextRevision % adapter.snapshots.every === 0) {
+                  yield* adapter.snapshots.save(entityId, finalState, nextRevision).pipe(
+                    Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
+                    Effect.ignore
+                  )
+                }
+
+                return result
+              })
+
+              if (metrics) {
+                return run.pipe(
+                  Metric.trackDuration(Metric.tagged(metrics.latency, "command", tag)),
+                  Effect.tap(() => Metric.increment(Metric.tagged(metrics.total, "command", tag))),
+                  Effect.tapError(() => Metric.increment(Metric.tagged(metrics.errors, "command", tag)))
+                )
+              }
+              return run
+            }) as RpcGroup.HandlersFrom<Rpcs>[typeof handlerTag]
+          }
+
+          return group.of(
+            handlers as Partial<RpcGroup.HandlersFrom<Rpcs>> & RpcGroup.HandlersFrom<Rpcs>
+          )
+        })
+      ) as Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
+    }
+
     const toHttpRoute = <Rpcs extends Rpc.Any>(
       group: RpcGroup.RpcGroup<Rpcs>,
       path: `/${string}`,
@@ -376,6 +623,7 @@ export const define = <
       run,
       toEntityLayer,
       toRpcHandlers,
+      toStatefulRpcHandlers,
       toHttpRoute
     }
   }

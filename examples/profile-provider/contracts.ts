@@ -9,8 +9,7 @@
  * instead of an opaque JSON string.
  */
 import * as Schema from "effect/Schema"
-import { ClusterSchema, Entity } from "@effect/cluster"
-import { Rpc } from "@effect/rpc"
+import * as N2 from "../../src/framework/helpers/index.js"
 
 const NonNegativeNumber = Schema.Number.pipe(Schema.greaterThanOrEqualTo(0))
 const PositiveInt = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1))
@@ -299,7 +298,7 @@ export class SnapshotPublishedProfile extends Schema.TaggedClass<SnapshotPublish
   }
 ) {}
 
-export const ProfileEvent = Schema.Union(
+const ProfileEvents = N2.defineEvents(
   ProfileCreated,
   MergedDataProfile,
   SnapshotCreatedProfile,
@@ -308,6 +307,8 @@ export const ProfileEvent = Schema.Union(
   ProfileBranchForked,
   SnapshotPublishedProfile
 )
+
+export const ProfileEvent = ProfileEvents.schema
 export type ProfileEvent = typeof ProfileEvent.Type
 
 export class ProfileError extends Schema.TaggedError<ProfileError>()(
@@ -494,7 +495,7 @@ export class GetProfileHistory extends Schema.TaggedRequest<GetProfileHistory>("
   }
 ) {}
 
-export const ProfileCommandSchema = Schema.Union(
+export const ProfileProviderCommands = N2.defineCommands(
   CreateProfile,
   MergeProfileData,
   ForkProfileBranch,
@@ -503,51 +504,12 @@ export const ProfileCommandSchema = Schema.Union(
   GetProfile,
   GetProfileHistory
 )
+
+export const ProfileCommandSchema = ProfileProviderCommands.schema
 export type ProfileCommand = typeof ProfileCommandSchema.Type
 
-export const ProfileProviderEntity = Entity.make("ProfileProvider", [
-  Rpc.make("CreateProfile", {
-    payload: CreateProfile.fields,
-    primaryKey: (p) => p.profileId,
-    success: CommandResult,
-    error: ProfileError
-  }),
-  Rpc.make("MergeProfileData", {
-    payload: MergeProfileData.fields,
-    primaryKey: (p) => p.profileId,
-    success: CommandResult,
-    error: ProfileError
-  }),
-  Rpc.make("ForkProfileBranch", {
-    payload: ForkProfileBranch.fields,
-    primaryKey: (p) => p.profileId,
-    success: CommandResult,
-    error: ProfileError
-  }),
-  Rpc.make("CreateProfileSnapshot", {
-    payload: CreateProfileSnapshot.fields,
-    primaryKey: (p) => p.profileId,
-    success: CommandResult,
-    error: ProfileError
-  }),
-  Rpc.make("PublishProfileSnapshot", {
-    payload: PublishProfileSnapshot.fields,
-    primaryKey: (p) => p.profileId,
-    success: CommandResult,
-    error: ProfileError
-  }),
-  Rpc.make("GetProfile", {
-    payload: GetProfile.fields,
-    primaryKey: (p) => p.profileId,
-    success: ProfileState,
-    error: ProfileNotFound
-  }),
-  Rpc.make("GetProfileHistory", {
-    payload: GetProfileHistory.fields,
-    primaryKey: (p) => p.profileId,
-    success: ProfileHistory,
-    error: ProfileNotFound
-  })
-]).annotateRpcs(ClusterSchema.Persisted, true)
-
+export const ProfileProviderEntity = ProfileProviderCommands.toPersistedEntity(
+  "ProfileProvider",
+  (p) => p.profileId
+)
 export const ProfileProviderRpcs = ProfileProviderEntity.protocol
