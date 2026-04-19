@@ -8,14 +8,10 @@
  */
 import { test, expect } from "bun:test"
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
-import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
-import * as ExpEventJournal from "@effect/experimental/EventJournal"
 import { EventLog as EL } from "@effect/experimental"
-import { Identity } from "@effect/experimental/EventLog"
-import * as EventLogApi from "@effect/experimental/EventLog"
 import { RpcTest } from "@effect/rpc"
+import { makeTestAggregate } from "../../src/framework/helpers/TestAggregate.js"
 import { handle, initialProfileState } from "./aggregate.js"
 import {
   CreateProfile,
@@ -35,7 +31,6 @@ import {
 import { ProfileProviderEventGroup, ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderHandlersRaw } from "./entity.js"
 import { ProfileProviderSnapshots } from "./snapshots.js"
-import type { SnapshotEntry } from "../../src/framework/helpers/Snapshots.js"
 
 const makeProfileId = (seed: number) =>
   `00000000-0000-4000-8000-${seed.toString().padStart(12, "0")}`
@@ -101,47 +96,15 @@ const NoOpProjection = EL.group(
       .handle("SnapshotPublishedProfile", (_) => Effect.void)
 )
 
-const testJournalLayer = ExpEventJournal.layerMemory
-const testIdentityLayer = Layer.succeed(Identity, Identity.makeRandom())
-
-const testEventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
-  Layer.provide(NoOpProjection),
-  Layer.provide(Layer.merge(testJournalLayer, testIdentityLayer))
-)
-
-const makeTestLayers = () => {
-  const snapshotStore = new Map<string, SnapshotEntry<ProfileState>>()
-  const snapshotsLayer = Layer.succeed(ProfileProviderSnapshots, {
-    load: (profileId: string) => Effect.succeed(Option.fromNullable(snapshotStore.get(profileId))),
-    save: (profileId: string, state: ProfileState, revision: number) =>
-      Effect.sync(() => {
-        snapshotStore.set(profileId, { state, revision })
-      })
-  })
-
-  return {
-    snapshotStore,
-    handlersLayer: Layer.provide(ProfileProviderHandlersRaw, Layer.mergeAll(
-      testJournalLayer,
-      testIdentityLayer,
-      testEventLogLayer,
-      snapshotsLayer
-    ))
-  }
-}
+const { makeTestLayers, runWith } = makeTestAggregate<ProfileState>({
+  eventLogSchema: ProfileProviderEventLogSchema,
+  noOpProjection: NoOpProjection,
+  handlersLayer: ProfileProviderHandlersRaw,
+  snapshotsTag: ProfileProviderSnapshots
+})
 
 const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
   Effect.runPromise(effect)
-
-const runWith = <A, E, R, P, PE, PR>(
-  handlersLayer: Layer.Layer<P, PE, PR>,
-  program: Effect.Effect<A, E, R>
-): Promise<A> =>
-  Effect.runPromise(
-    Effect.scoped(program).pipe(
-      Effect.provide(handlersLayer)
-    ) as unknown as Effect.Effect<A, never, never>
-  )
 
 test("CreateProfile initializes draft state and metadata revisions", async () => {
   const profileId = makeProfileId(1)

@@ -31,13 +31,11 @@ export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
     }),
     OrderSubmitted: (state) => ({
       ...state,
-      submittedAt: Option.some(DateTime.now),
       status: "submitted" as const
     }),
     OrderCancelled: (state) => ({
       ...state,
-      status: "cancelled" as const,
-      cancelledAt: Option.some(DateTime.now)
+      status: "cancelled" as const
     })
   },
   decide: {
@@ -52,7 +50,7 @@ export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
           new C.OrderCreated({
             orderId: command.orderId,
             customerId: command.customerId,
-            createdAt: now
+            occurredAt: now
           })
         ]
       }),
@@ -64,9 +62,11 @@ export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
           })
         }
 
+        const now = yield* DateTime.now
         return [
           new C.ItemAdded({
             orderId: command.orderId,
+            occurredAt: now,
             sku: command.sku,
             quantity: command.quantity,
             price: command.price
@@ -89,7 +89,7 @@ export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
 
         const now = yield* DateTime.now
         return [
-          new C.OrderSubmitted({ orderId: command.orderId, submittedAt: now })
+          new C.OrderSubmitted({ orderId: command.orderId, occurredAt: now })
         ]
       }),
     CancelOrder: (state, command) =>
@@ -109,7 +109,7 @@ export const Order = N2.define<C.OrderEvent, C.OrderCommand>()({
           new C.OrderCancelled({
             orderId: command.orderId,
             reason: command.reason,
-            cancelledAt: now
+            occurredAt: now
           })
         ]
       }),

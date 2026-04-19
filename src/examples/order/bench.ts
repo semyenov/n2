@@ -67,9 +67,9 @@ const draftWith100Items = makeDraftState(100)
 const stockedInventory = new InventoryState({ sku: "SKU-A", available: 10_000, reserved: 0 })
 
 // Pre-built events and commands (avoid allocation noise in hot path)
-const createdEvent = new OrderCreated({ orderId: "o1", customerId: "c1", createdAt: DateTime.unsafeMake(0) })
-const itemAddedEvent = new ItemAdded({ orderId: "o1", sku: "SKU-1", quantity: 2, price: 19.99 })
-const submittedEvent = new OrderSubmitted({ orderId: "o1", submittedAt: DateTime.unsafeMake(1000) })
+const createdEvent = new OrderCreated({ orderId: "o1", customerId: "c1", occurredAt: DateTime.unsafeMake(0) })
+const itemAddedEvent = new ItemAdded({ orderId: "o1", sku: "SKU-1", quantity: 2, price: 19.99, occurredAt: DateTime.unsafeMake(0) })
+const submittedEvent = new OrderSubmitted({ orderId: "o1", occurredAt: DateTime.unsafeMake(1000) })
 const createCmd = new CreateOrder({ orderId: "o1", customerId: "c1" })
 const addItemCmd = new AddItem({ orderId: "o1", sku: "SKU-1", quantity: 2, price: 19.99 })
 const submitCmd = new SubmitOrder({ orderId: "o1" })
@@ -99,7 +99,7 @@ group("evolve (pure state transition)", () => {
   })
 
   bench("StockReserved → inventory state", () => {
-    Inventory.evolve(stockedInventory, new StockReserved({ sku: "SKU-A", quantity: 1, orderId: "o1" }))
+    Inventory.evolve(stockedInventory, new StockReserved({ sku: "SKU-A", occurredAt: DateTime.unsafeMake(0), quantity: 1, orderId: "o1" }))
   })
 })
 
@@ -280,7 +280,7 @@ group("schema class construction", () => {
   })
 
   bench("OrderCreated (event)", () => {
-    new OrderCreated({ orderId: "o1", customerId: "c1", createdAt: DateTime.unsafeMake(0) })
+    new OrderCreated({ orderId: "o1", customerId: "c1", occurredAt: DateTime.unsafeMake(0) })
   })
 
   bench("OrderState (state)", () => {

@@ -92,7 +92,7 @@ test("CreateOrder on existing order fails", async () => {
 })
 
 test("evolve produces correct state", () => {
-  const created = new OrderCreated({ orderId: "o7", customerId: "c1", createdAt: DateTime.unsafeMake(0) })
+  const created = new OrderCreated({ orderId: "o7", customerId: "c1", occurredAt: DateTime.unsafeMake(0) })
   const s1 = evolve(emptyState, created)
   expect(s1.status).toBe("draft")
   expect(Option.getOrElse(s1.customerId, () => "")).toBe("c1")

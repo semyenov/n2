@@ -1,6 +1,7 @@
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+Full documentation is in [docs/](docs/) — see [Getting Started](docs/getting-started.md), [Framework API](docs/framework-api.md), [Patterns](docs/patterns.md), [Examples](docs/examples.md).
 
 ## What This Is
 

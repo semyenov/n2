@@ -9,14 +9,20 @@ import * as N2 from "../../framework/helpers/index.js"
 // Events
 // ---------------------------------------------------------------------------
 
+/** Common fields shared by all inventory events. */
+const InventoryEventBase = {
+  sku: Schema.String,
+  occurredAt: Schema.DateTimeUtc
+}
+
 export class StockReserved extends Schema.TaggedClass<StockReserved>()(
   "StockReserved",
-  { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String }
+  { ...InventoryEventBase, quantity: Schema.Number, orderId: Schema.String }
 ) {}
 
 export class StockReleased extends Schema.TaggedClass<StockReleased>()(
   "StockReleased",
-  { sku: Schema.String, quantity: Schema.Number, orderId: Schema.String }
+  { ...InventoryEventBase, quantity: Schema.Number, orderId: Schema.String }
 ) {}
 
 const InventoryEvents = N2.defineEvents(StockReserved, StockReleased)
@@ -95,3 +101,4 @@ export type InventoryCommand = typeof InventoryCommand.Type
 // ---------------------------------------------------------------------------
 
 export const InventoryEntity = InventoryCommands.toPersistedEntity("Inventory", (p: { sku: string }) => p.sku)
+export const InventoryRpcs = InventoryEntity.protocol

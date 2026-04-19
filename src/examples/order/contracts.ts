@@ -22,24 +22,30 @@ export class LineItem extends Schema.Class<LineItem>("LineItem")({
 // Events
 // ---------------------------------------------------------------------------
 
+/** Common fields shared by all order events. */
+const OrderEventBase = {
+  orderId: Schema.String,
+  occurredAt: Schema.DateTimeUtc
+}
+
 export class OrderCreated extends Schema.TaggedClass<OrderCreated>()(
   "OrderCreated",
-  { orderId: Schema.String, customerId: Schema.String, createdAt: Schema.DateTimeUtc }
+  { ...OrderEventBase, customerId: Schema.String }
 ) { }
 
 export class ItemAdded extends Schema.TaggedClass<ItemAdded>()(
   "ItemAdded",
-  { orderId: Schema.String, sku: Schema.String, quantity: Schema.Number, price: Schema.Number }
+  { ...OrderEventBase, sku: Schema.String, quantity: Schema.Number, price: Schema.Number }
 ) { }
 
 export class OrderSubmitted extends Schema.TaggedClass<OrderSubmitted>()(
   "OrderSubmitted",
-  { orderId: Schema.String, submittedAt: Schema.DateTimeUtc }
+  { ...OrderEventBase }
 ) { }
 
 export class OrderCancelled extends Schema.TaggedClass<OrderCancelled>()(
   "OrderCancelled",
-  { orderId: Schema.String, reason: Schema.String, cancelledAt: Schema.DateTimeUtc }
+  { ...OrderEventBase, reason: Schema.String }
 ) { }
 
 const OrderEvents = N2.defineEvents(

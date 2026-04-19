@@ -1,6 +1,7 @@
 /**
  * Inventory aggregate.
  */
+import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
 import * as N2 from "../../framework/helpers/index.js"
 import * as C from "./contracts.js"
@@ -34,22 +35,28 @@ export const Inventory = N2.define<C.InventoryEvent, C.InventoryCommand>()({
           })
         }
 
+        const now = yield* DateTime.now
         return [
           new C.StockReserved({
             sku: command.sku,
+            occurredAt: now,
             quantity: command.quantity,
             orderId: command.orderId
           })
         ]
       }),
     ReleaseStock: (_state, command) =>
-      Effect.succeed([
-        new C.StockReleased({
-          sku: command.sku,
-          quantity: command.quantity,
-          orderId: command.orderId
-        })
-      ])
+      Effect.gen(function* () {
+        const now = yield* DateTime.now
+        return [
+          new C.StockReleased({
+            sku: command.sku,
+            occurredAt: now,
+            quantity: command.quantity,
+            orderId: command.orderId
+          })
+        ]
+      })
   }
 })
 
