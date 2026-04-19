@@ -12,9 +12,9 @@
  * Both sides must use the same object reference so EventLog can match published
  * events to the correct dispatch watcher.
  */
-import * as Schema from "effect/Schema"
 import { EventGroup } from "@effect/experimental"
 import * as EventLogApi from "@effect/experimental/EventLog"
+import * as N2 from "../../src/framework/helpers/index.js"
 import {
   ProfileCreated,
   MergedDataProfile,
@@ -25,47 +25,41 @@ import {
   SnapshotPublishedProfile
 } from "./contracts.js"
 
-/** Extract payload fields from a TaggedClass (strips `_tag`), returning a Schema.Struct. */
-const fieldsOf = <F extends Schema.Struct.Fields & { _tag: any }>(cls: { fields: F }) => {
-  const { _tag: _, ...rest } = cls.fields
-  return Schema.Struct(rest as { [K in Exclude<keyof F, "_tag">]: F[K] })
-}
-
 export const ProfileProviderEventGroup = EventGroup.empty
   .add({
     tag: "ProfileCreated",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(ProfileCreated)
+    payload: N2.eventPayloadSchema(ProfileCreated)
   })
   .add({
     tag: "MergedDataProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(MergedDataProfile)
+    payload: N2.eventPayloadSchema(MergedDataProfile)
   })
   .add({
     tag: "SnapshotCreatedProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(SnapshotCreatedProfile)
+    payload: N2.eventPayloadSchema(SnapshotCreatedProfile)
   })
   .add({
     tag: "MetaDataCreated",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(MetaDataCreated)
+    payload: N2.eventPayloadSchema(MetaDataCreated)
   })
   .add({
     tag: "PersonalDataExtracted",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(PersonalDataExtracted)
+    payload: N2.eventPayloadSchema(PersonalDataExtracted)
   })
   .add({
     tag: "ProfileBranchForked",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(ProfileBranchForked)
+    payload: N2.eventPayloadSchema(ProfileBranchForked)
   })
   .add({
     tag: "SnapshotPublishedProfile",
     primaryKey: (p: { profileId: string }) => p.profileId,
-    payload: fieldsOf(SnapshotPublishedProfile)
+    payload: N2.eventPayloadSchema(SnapshotPublishedProfile)
   })
 
 export const ProfileProviderEventLogSchema = EventLogApi.schema(ProfileProviderEventGroup)

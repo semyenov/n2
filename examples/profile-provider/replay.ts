@@ -4,7 +4,6 @@ import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import { BunRuntime } from "@effect/platform-bun"
 import * as EventJournalApi from "@effect/experimental/EventJournal"
-import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { PgClient } from "@effect/sql-pg"
 import { ProfileProviderClickhouseBootstrapLayer, resetProfileProviderClickhouseTables } from "./clickhouse-schema.js"
@@ -20,11 +19,8 @@ import {
   SnapshotPublishedProfile
 } from "./contracts.js"
 import { ProfileProviderEventGroup } from "./events.js"
-import {
-  insertProfileProviderProjectionEvent,
-  upsertProfileProviderCurrentProfile,
-  upsertProfileProviderCurrentSnapshot
-} from "./projection-store-clickhouse.js"
+import { ProfileProviderProjectionStore } from "./projection-store.js"
+import { ProfileProviderProjectionStoreClickhouseLive } from "./projection-store-clickhouse.js"
 
 /** Decode event payloads from EventJournal msgpack using EventGroup decoders. */
 const decoders = {
@@ -158,17 +154,29 @@ export const toProfileEvent = (entry: EventJournalApi.Entry) => {
 
 const replayEvent = (event: ProfileEvent) =>
   Effect.gen(function* () {
-    const clickhouse = yield* ClickhouseClient.ClickhouseClient
-    yield* insertProfileProviderProjectionEvent(clickhouse, event)
-    yield* upsertProfileProviderCurrentProfile(clickhouse, event)
-    yield* upsertProfileProviderCurrentSnapshot(clickhouse, event)
+    const store = yield* ProfileProviderProjectionStore
+    switch (event._tag) {
+      case "ProfileCreated": return yield* store.onProfileCreated(event)
+      case "MergedDataProfile": return yield* store.onMergedDataProfile(event)
+      case "SnapshotCreatedProfile": return yield* store.onSnapshotCreatedProfile(event)
+      case "MetaDataCreated": return yield* store.onMetaDataCreated(event)
+      case "PersonalDataExtracted": return yield* store.onPersonalDataExtracted(event)
+      case "ProfileBranchForked": return yield* store.onProfileBranchForked(event)
+      case "SnapshotPublishedProfile": return yield* store.onSnapshotPublishedProfile(event)
+    }
   })
+
+const clickhouseReadyLayer = Layer.merge(
+  ProfileProviderClickhouseLayer,
+  Layer.provide(ProfileProviderClickhouseBootstrapLayer, ProfileProviderClickhouseLayer)
+)
 
 const ReplayLayer = Layer.mergeAll(
   SqlLayer,
   SqlEventJournal.layer(),
   ProfileProviderClickhouseLayer,
-  ProfileProviderClickhouseBootstrapLayer
+  ProfileProviderClickhouseBootstrapLayer,
+  Layer.provide(ProfileProviderProjectionStoreClickhouseLive, clickhouseReadyLayer)
 )
 
 export const matchesReplayOptions = (event: ProfileEvent, options: ReplayOptions) => {

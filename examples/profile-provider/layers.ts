@@ -51,8 +51,13 @@ export const ClusterWorkflowLayer = Layer.provideMerge(
   Layer.merge(ClusterWorkflowEngine.layer, ProfileProviderEventPublisherLive)
 )
 
+const projectionLayer = Layer.provide(
+  ProfileProviderProjectionLayer,
+  Layer.merge(projectionStoreLayer, ProfileProviderOutboxPgLive)
+)
+
 const EventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
-  Layer.provide(Layer.provide(ProfileProviderProjectionLayer, projectionStoreLayer)),
+  Layer.provide(projectionLayer),
   Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
 )
 

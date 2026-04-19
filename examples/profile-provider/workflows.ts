@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
 import { Activity, DurableClock, Workflow, WorkflowEngine } from "@effect/workflow"
+import { computeRetryDelaySeconds } from "../../src/framework/helpers/Outbox.js"
 
 const Headers = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 const TOPIC = "profile-provider.events"
@@ -32,8 +33,7 @@ export class ProfileProviderEventPublisher extends Context.Tag("ProfileProviderE
   }
 >() {}
 
-export const computeRetryDelaySeconds = (attempt: number) =>
-  Math.min(2 ** attempt, 300)
+export { computeRetryDelaySeconds }
 
 export const makeProfileProviderEventMessage = (options: {
   readonly profileId: string

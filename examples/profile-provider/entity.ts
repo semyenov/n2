@@ -4,7 +4,7 @@ import * as Option from "effect/Option"
 import { Entity, EntityProxy, EntityProxyServer } from "@effect/cluster"
 import * as EventLogApi from "@effect/experimental/EventLog"
 import * as Schedule from "effect/Schedule"
-import { ProfileProvider, handle, initialProfileState } from "./aggregate.js"
+import { ProfileProvider, initialProfileState } from "./aggregate.js"
 import { InfrastructureLayer } from "./layers.js"
 import { ProfileProviderEventGroup, ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderSnapshots, SNAPSHOT_EVERY } from "./snapshots.js"
@@ -58,13 +58,13 @@ const postHandle = ({ command, state }: { command: ProfileCommand; events: Reado
 }
 
 const readQueryOverrides = {
-  GetProfile: (_req: { readonly payload: unknown }, ctx: { readonly entityId: string; readonly getState: Effect.Effect<ProfileState> }) =>
+  GetProfile: (_command: ProfileCommand, ctx: { readonly entityId: string; readonly getState: Effect.Effect<ProfileState> }) =>
     Effect.flatMap(ctx.getState, (state) =>
       state.status === "empty"
         ? Effect.fail(new ProfileNotFound({ profileId: ctx.entityId }))
         : Effect.succeed(state)
     ),
-  GetProfileHistory: (_req: { readonly payload: unknown }, ctx: { readonly entityId: string; readonly getState: Effect.Effect<ProfileState> }) =>
+  GetProfileHistory: (_command: ProfileCommand, ctx: { readonly entityId: string; readonly getState: Effect.Effect<ProfileState> }) =>
     Effect.flatMap(ctx.getState, (state) =>
       state.status === "empty"
         ? Effect.fail(new ProfileNotFound({ profileId: ctx.entityId }))
@@ -110,7 +110,7 @@ export const ProfileProviderHandlersRaw = ProfileProvider.toStatefulRpcHandlers(
         type EventTag = ProfileEvent["_tag"]
         yield* Effect.forEach(
           events,
-          (event) => publish(event._tag as EventTag & keyof typeof ProfileProviderEventGroup.events, event),
+          (event) => publish(event._tag, event),
           { discard: true }
         )
       }).pipe(
@@ -119,19 +119,19 @@ export const ProfileProviderHandlersRaw = ProfileProvider.toStatefulRpcHandlers(
       ),
     metrics: { prefix: "profile_provider" },
     overrides: {
-      GetProfile: (payload: unknown, ctx) =>
-        ctx.getState((payload as { profileId: string }).profileId).pipe(
+      GetProfile: (command, ctx) =>
+        ctx.getState(command.profileId).pipe(
           Effect.flatMap((state) =>
             state.status === "empty"
-              ? Effect.fail(new ProfileNotFound({ profileId: (payload as { profileId: string }).profileId }))
+              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
               : Effect.succeed(state)
           )
         ),
-      GetProfileHistory: (payload: unknown, ctx) =>
-        ctx.getState((payload as { profileId: string }).profileId).pipe(
+      GetProfileHistory: (command, ctx) =>
+        ctx.getState(command.profileId).pipe(
           Effect.flatMap((state) =>
             state.status === "empty"
-              ? Effect.fail(new ProfileNotFound({ profileId: (payload as { profileId: string }).profileId }))
+              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
               : Effect.succeed(toHistory(state))
           )
         )

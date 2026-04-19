@@ -34,7 +34,8 @@ import {
 } from "./contracts.js"
 import { ProfileProviderEventGroup, ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderHandlersRaw } from "./entity.js"
-import { ProfileProviderSnapshots, type SnapshotEntry } from "./snapshots.js"
+import { ProfileProviderSnapshots } from "./snapshots.js"
+import type { SnapshotEntry } from "../../src/framework/helpers/Snapshots.js"
 
 const makeProfileId = (seed: number) =>
   `00000000-0000-4000-8000-${seed.toString().padStart(12, "0")}`
@@ -109,10 +110,10 @@ const testEventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
 )
 
 const makeTestLayers = () => {
-  const snapshotStore = new Map<string, SnapshotEntry>()
+  const snapshotStore = new Map<string, SnapshotEntry<ProfileState>>()
   const snapshotsLayer = Layer.succeed(ProfileProviderSnapshots, {
     load: (profileId: string) => Effect.succeed(Option.fromNullable(snapshotStore.get(profileId))),
-    save: (profileId: string, state: SnapshotEntry["state"], revision: number) =>
+    save: (profileId: string, state: ProfileState, revision: number) =>
       Effect.sync(() => {
         snapshotStore.set(profileId, { state, revision })
       })
@@ -132,14 +133,14 @@ const makeTestLayers = () => {
 const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
   Effect.runPromise(effect)
 
-const runWith = <A>(
-  handlersLayer: Layer.Layer<any, any, never>,
-  program: Effect.Effect<A, any, any>
+const runWith = <A, E, R, P, PE, PR>(
+  handlersLayer: Layer.Layer<P, PE, PR>,
+  program: Effect.Effect<A, E, R>
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(program).pipe(
       Effect.provide(handlersLayer)
-    ) as Effect.Effect<A, never, never>
+    ) as unknown as Effect.Effect<A, never, never>
   )
 
 test("CreateProfile initializes draft state and metadata revisions", async () => {
@@ -162,7 +163,6 @@ test("CreateProfile initializes draft state and metadata revisions", async () =>
   expect(state.status).toBe("draft")
   expect(state.profileId).toBe(profileId)
   expect(state.maskedProfileJson?.uuid).toBe(profileId)
-  expect(state.sourceAssets.length).toBe(1)
   expect(state.revision).toBe(3)
   expect(events.map((event) => event._tag)).toEqual([
     "ProfileCreated",

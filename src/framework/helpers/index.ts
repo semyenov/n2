@@ -38,6 +38,7 @@ export {
   defineCommands,
   defineErrors,
   defineEvents,
+  eventPayloadSchema,
   defineSchemaUnion,
   defineTaggedConstructors,
   type CommandCollection,
@@ -63,3 +64,16 @@ export { rpcFromCommand } from "./EntityBuilder.js"
 export { makeHttpClient, makePromiseClient, type RpcPromiseClient } from "./Client.js"
 
 export { makeFetchClient } from "./FetchClient.js"
+
+export {
+  makeSnapshotService,
+  type SnapshotEntry,
+  type SnapshotService
+} from "./Snapshots.js"
+
+export {
+  makeOutboxService,
+  computeRetryDelaySeconds,
+  type OutboxEntry,
+  type OutboxService
+} from "./Outbox.js"

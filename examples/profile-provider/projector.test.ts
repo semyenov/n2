@@ -9,8 +9,9 @@ import * as EventLogApi from "@effect/experimental/EventLog"
 import { ProfileDocument, type ProfileEvent } from "./contracts.js"
 import { ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderProjectionLayer } from "./projector.js"
-import { ProfileProviderProjectionStore } from "./projection-store.js"
-import { type ProfileProviderEventMessage } from "./workflows.js"
+import { ProfileProviderProjectionStore, type ProjectionHandlers } from "./projection-store.js"
+import { ProfileProviderOutbox } from "./outbox.js"
+import type { ProfileProviderEventMessage } from "./workflows.js"
 
 const decodeProfile = Schema.decodeUnknownSync(ProfileDocument)
 
@@ -34,21 +35,36 @@ const makeProfile = (profileId: string) =>
     user_meta_data: { version: 1 }
   })
 
-test("projector writes through the projection store without requiring workflow services", async () => {
+test("projector writes through the projection store and outbox without requiring workflow services", async () => {
   const profileId = "00000000-0000-4000-8000-000000000111"
-  const projected: Array<{ tag: ProfileEvent["_tag"]; messageId: string }> = []
+  const projected: Array<{ tag: ProfileEvent["_tag"] }> = []
+  const outboxed: Array<{ messageId: string }> = []
   const journalLayer = ExpEventJournal.layerMemory
   const identityLayer = Layer.succeed(Identity, Identity.makeRandom())
+
+  const noOpHandlers: ProjectionHandlers = {
+    onProfileCreated: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
+    onMergedDataProfile: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
+    onSnapshotCreatedProfile: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
+    onMetaDataCreated: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
+    onPersonalDataExtracted: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
+    onProfileBranchForked: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) }),
+    onSnapshotPublishedProfile: (event) => Effect.sync(() => { projected.push({ tag: event._tag }) })
+  }
+
+  const noOpOutbox = {
+    enqueue: (message: ProfileProviderEventMessage) =>
+      Effect.sync(() => { outboxed.push({ messageId: message.id }) }),
+    claimPending: () => Effect.succeed([] as const),
+    markDispatched: () => Effect.void,
+    markFailed: () => Effect.void
+  }
 
   const layer = Layer.mergeAll(
     journalLayer,
     identityLayer,
-    Layer.succeed(ProfileProviderProjectionStore, {
-      project: (event: ProfileEvent, message: ProfileProviderEventMessage) =>
-        Effect.sync(() => {
-          projected.push({ tag: event._tag, messageId: message.id })
-        })
-    }),
+    Layer.succeed(ProfileProviderProjectionStore, noOpHandlers),
+    Layer.succeed(ProfileProviderOutbox, noOpOutbox),
     EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
       Layer.provide(ProfileProviderProjectionLayer),
       Layer.provide(Layer.merge(journalLayer, identityLayer))
@@ -75,10 +91,6 @@ test("projector writes through the projection store without requiring workflow s
     ) as Effect.Effect<void, never, never>
   )
 
-  expect(projected).toEqual([
-    {
-      tag: "ProfileCreated",
-      messageId: `${profileId}:1:ProfileCreated`
-    }
-  ])
+  expect(projected).toEqual([{ tag: "ProfileCreated" }])
+  expect(outboxed).toEqual([{ messageId: `${profileId}:1:ProfileCreated` }])
 })

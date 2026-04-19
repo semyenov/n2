@@ -81,6 +81,16 @@ type DecideEventsFor<Cmd extends Tagged, Handlers, Event extends Tagged> =
       : Event
     : Event
 
+/** Extract the `R` (requirements) type from a function returning an Effect. */
+type ExtractEffectR<T> = T extends (...args: ReadonlyArray<unknown>) => Effect.Effect<unknown, unknown, infer R> ? R : never
+
+/** Extract all requirements from an adapter's lifecycle hooks (snapshots, afterCommit, overrides). */
+type AdapterR<A> =
+  | (A extends { readonly snapshots: { readonly load: infer L } } ? ExtractEffectR<L> : never)
+  | (A extends { readonly snapshots: { readonly save: infer S } } ? ExtractEffectR<S> : never)
+  | (A extends { readonly afterCommit: infer AC } ? ExtractEffectR<AC> : never)
+  | (A extends { readonly overrides: { readonly [k: string]: infer O } } ? ExtractEffectR<O> : never)
+
 const commandTags = <Command extends Tagged>(
   commands: CommandConstructors<Command>
 ): ReadonlyArray<TagOf<Command>> =>
@@ -105,7 +115,7 @@ const makeRoute = <Rpcs extends Rpc.Any, R>(
     )
 
 /** Options for mapping execution results when wiring to a cluster Entity. */
-export interface EntityAdapterOptions<State, Command, Event, Result, MappedErr> {
+export interface EntityAdapterOptions<State, Command extends Tagged, Event, Result, MappedErr, HooksR = unknown> {
   readonly toResult: (ctx: {
     readonly entityId: string
     readonly revision: number
@@ -116,8 +126,8 @@ export interface EntityAdapterOptions<State, Command, Event, Result, MappedErr> 
   readonly toError: (error: unknown) => MappedErr
   /** Load/save snapshots. Snapshot loading restores state on entity init. */
   readonly snapshots?: {
-    readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, any>
-    readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, any>
+    readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, HooksR>
+    readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, HooksR>
     readonly every: number
   }
   /** Transform state after handle() succeeds (pure, sync). Use for non-event-sourced side effects. */
@@ -134,18 +144,19 @@ export interface EntityAdapterOptions<State, Command, Event, Result, MappedErr> 
     readonly command: Command
     readonly events: ReadonlyArray<Event>
     readonly state: State
-  }) => Effect.Effect<void, unknown, any>
-  /** Override specific command handlers (e.g. read queries). Bypasses dispatch entirely. */
+  }) => Effect.Effect<void, unknown, HooksR>
+  /** Override specific command handlers (e.g. read queries). Bypasses dispatch entirely.
+   *  Each key narrows the command to the specific tagged member for that tag. */
   readonly overrides?: {
-    readonly [tag: string]: (
-      request: { readonly payload: unknown },
+    readonly [K in TagOf<Command>]?: (
+      command: Extract<Command, { readonly _tag: K }>,
       ctx: { readonly entityId: string; readonly getState: Effect.Effect<State> }
-    ) => Effect.Effect<any, any, any>
+    ) => Effect.Effect<unknown, unknown, HooksR>
   }
 }
 
 /** Options for stateful multi-entity RPC handlers (dev/test mode). */
-export interface StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr> {
+export interface StatefulRpcAdapterOptions<State, Command extends Tagged, Event, Result, MappedErr, HooksR = unknown> {
   /** Extract entity ID from a command. */
   readonly entityId: (command: Command) => string
   readonly toResult: (ctx: {
@@ -157,8 +168,8 @@ export interface StatefulRpcAdapterOptions<State, Command, Event, Result, Mapped
   }) => Result
   readonly toError: (error: unknown) => MappedErr
   readonly snapshots?: {
-    readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, any>
-    readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, any>
+    readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, HooksR>
+    readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, HooksR>
     readonly every: number
   }
   readonly postHandle?: (ctx: {
@@ -173,15 +184,16 @@ export interface StatefulRpcAdapterOptions<State, Command, Event, Result, Mapped
     readonly command: Command
     readonly events: ReadonlyArray<Event>
     readonly state: State
-  }) => Effect.Effect<void, unknown, any>
+  }) => Effect.Effect<void, unknown, HooksR>
   /** Auto-instrument with counters and timers: `${prefix}.commands.total`, `${prefix}.commands.errors`, `${prefix}.command.duration_ms`. */
   readonly metrics?: { readonly prefix: string }
-  /** Override specific command handlers (e.g. read queries). */
+  /** Override specific command handlers (e.g. read queries).
+   *  Each key narrows the command to the specific tagged member for that tag. */
   readonly overrides?: {
-    readonly [tag: string]: (
-      payload: unknown,
-      ctx: { readonly entityId: string; readonly getState: (entityId: string) => Effect.Effect<State, unknown, any> }
-    ) => Effect.Effect<any, any, any>
+    readonly [K in TagOf<Command>]?: (
+      command: Extract<Command, { readonly _tag: K }>,
+      ctx: { readonly entityId: string; readonly getState: (entityId: string) => Effect.Effect<State, unknown, HooksR> }
+    ) => Effect.Effect<unknown, unknown, HooksR>
   }
 }
 
@@ -229,9 +241,9 @@ export interface Definition<
     Err,
     R
   >
-  readonly toEntityLayer: <Type extends string, Rpcs extends Rpc.Any, Result, MappedErr>(
+  readonly toEntityLayer: <Type extends string, Rpcs extends Rpc.Any, Result, MappedErr, const Adapter extends EntityAdapterOptions<State, Command, Event, Result, MappedErr>>(
     entity: Entity.Entity<Type, Rpcs>,
-    options: EntityAdapterOptions<State, Command, Event, Result, MappedErr>,
+    adapter: Adapter,
     layerOptions?: {
       readonly maxIdleTime?: DurationInput
       readonly concurrency?: number | "unbounded"
@@ -239,16 +251,16 @@ export interface Definition<
   ) => Layer.Layer<
     never,
     never,
-    R | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
+    R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
   >
   readonly toRpcHandlers: <Rpcs extends Rpc.Any, Result, MappedErr>(
     group: RpcGroup.RpcGroup<Rpcs>,
     options: RpcAdapterOptions<State, Command, Event, Result, MappedErr>
   ) => Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
-  readonly toStatefulRpcHandlers: <Rpcs extends Rpc.Any, Result, MappedErr>(
+  readonly toStatefulRpcHandlers: <Rpcs extends Rpc.Any, Result, MappedErr, const Adapter extends StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>>(
     group: RpcGroup.RpcGroup<Rpcs>,
-    options: StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
-  ) => Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
+    adapter: Adapter
+  ) => Layer.Layer<Rpc.ToHandler<Rpcs>, never, R | AdapterR<Adapter>>
   readonly toHttpRoute: <Rpcs extends Rpc.Any>(
     group: RpcGroup.RpcGroup<Rpcs>,
     path: `/${string}`,
@@ -368,10 +380,12 @@ export const define = <
             const handlerTag = tag as keyof Entity.HandlersFrom<Rpcs>
 
             if (adapter.overrides?.[tag]) {
-              const override = adapter.overrides[tag]
-              handlers[handlerTag] = ((request: { readonly payload: unknown }) =>
-                override(request, { entityId: address.entityId, getState: Ref.get(stateRef) })
-              ) as Entity.HandlersFrom<Rpcs>[typeof handlerTag]
+              const override = adapter.overrides[tag]!
+              const OverrideCtor = commandsByTag[tag]
+              handlers[handlerTag] = ((request: { readonly payload: unknown }) => {
+                const command = instantiateCommand(OverrideCtor, request.payload)
+                return (override as unknown as (cmd: Command, ctx: { entityId: string; getState: Effect.Effect<State> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId: address.entityId, getState: Ref.get(stateRef) })
+              }) as Entity.HandlersFrom<Rpcs>[typeof handlerTag]
               continue
             }
 
@@ -496,7 +510,7 @@ export const define = <
         Effect.gen(function* () {
           const store = yield* SynchronizedRef.make(new Map<string, StateEntry>())
 
-          const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, unknown, any> => {
+          const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, unknown, unknown> => {
             if (map.has(entityId)) return Effect.succeed(map.get(entityId)!)
             if (!adapter.snapshots) return Effect.succeed({ state: options.initialState, revision: 0 })
             return adapter.snapshots.load(entityId).pipe(
@@ -505,7 +519,7 @@ export const define = <
             )
           }
 
-          const getState = (entityId: string): Effect.Effect<State, unknown, any> =>
+          const getState = (entityId: string): Effect.Effect<State, unknown, unknown> =>
             SynchronizedRef.get(store).pipe(
               Effect.flatMap((map) => getOrLoad(map, entityId)),
               Effect.map(({ state }) => state)
@@ -517,11 +531,11 @@ export const define = <
             const handlerTag = tag as keyof RpcGroup.HandlersFrom<Rpcs>
 
             if (adapter.overrides?.[tag]) {
-              const override = adapter.overrides[tag]
+              const override = adapter.overrides[tag]!
               handlers[handlerTag] = ((payload: unknown) => {
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
-                return override(payload, { entityId, getState })
+                return (override as unknown as (cmd: Command, ctx: { entityId: string; getState: (entityId: string) => Effect.Effect<State, unknown, unknown> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId, getState })
               }) as RpcGroup.HandlersFrom<Rpcs>[typeof handlerTag]
               continue
             }

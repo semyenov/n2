@@ -166,6 +166,24 @@ export const defineTaggedConstructors = <const Members extends [TaggedSchema, ..
 ): TaggedConstructors<Members> =>
   constructorsByTag(members)
 
+/**
+ * Extract payload fields from a TaggedClass (strips `_tag`), returning a Schema.Struct
+ * suitable for use as an EventGroup payload. This bridges domain events (TaggedClass)
+ * to @effect/experimental EventLog payloads, keeping contracts.ts as the single source of truth.
+ *
+ * @example
+ * ```ts
+ * import { EventGroup } from "@effect/experimental"
+ *
+ * const MyEventGroup = EventGroup.empty
+ *   .add({ tag: "OrderCreated", primaryKey: (p) => p.orderId, payload: eventPayloadSchema(OrderCreated) })
+ * ```
+ */
+export const eventPayloadSchema = <F extends Schema.Struct.Fields & { _tag: any }>(cls: { fields: F }) => {
+  const { _tag: _, ...rest } = cls.fields
+  return Schema.Struct(rest as { [K in Exclude<keyof F, "_tag">]: F[K] })
+}
+
 export const defineEvents = <const Members extends [TaggedSchema, ...Array<TaggedSchema>]>(
   ...members: Members
 ): TaggedCollection<Members> => ({
