@@ -197,8 +197,8 @@ export class ProfileCreated extends Schema.TaggedClass<ProfileCreated>()(
     branchId: Schema.String,
     schemaVersion: Schema.String,
     maskedProfileJson: ProfileDocument,
-    createdAt: Schema.DateTimeUtc,
-    createdBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     summary: Schema.String,
     revision: Schema.Number.pipe(Schema.int())
   }
@@ -211,8 +211,8 @@ export class MergedDataProfile extends Schema.TaggedClass<MergedDataProfile>()(
     branchId: Schema.String,
     schemaVersion: Schema.String,
     maskedProfileJson: ProfileDocument,
-    mergedAt: Schema.DateTimeUtc,
-    mergedBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     summary: Schema.String,
     sourceCount: Schema.Number.pipe(Schema.int()),
     revision: Schema.Number.pipe(Schema.int())
@@ -229,8 +229,8 @@ export class SnapshotCreatedProfile extends Schema.TaggedClass<SnapshotCreatedPr
     profileJson: ProfileDocument,
     metadataJson: Schema.String,
     schemaVersion: Schema.String,
-    createdAt: Schema.DateTimeUtc,
-    createdBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     summary: Schema.String,
     revision: Schema.Number.pipe(Schema.int())
   }
@@ -248,8 +248,8 @@ export class MetaDataCreated extends Schema.TaggedClass<MetaDataCreated>()(
     scopeId: Schema.String,
     metadataJson: Schema.String,
     schemaVersion: Schema.String,
-    createdAt: Schema.DateTimeUtc,
-    createdBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     revision: Schema.Number.pipe(Schema.int())
   }
 ) {}
@@ -264,8 +264,8 @@ export class PersonalDataExtracted extends Schema.TaggedClass<PersonalDataExtrac
     piiStorageKey: Schema.String,
     piiJson: Schema.String,
     jurisdiction: Schema.String,
-    extractedAt: Schema.DateTimeUtc,
-    extractedBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     revision: Schema.Number.pipe(Schema.int())
   }
 ) {}
@@ -279,8 +279,8 @@ export class ProfileBranchForked extends Schema.TaggedClass<ProfileBranchForked>
     baseBranchId: Schema.String,
     baseRevision: Schema.Number.pipe(Schema.int()),
     baseSnapshotId: Schema.String,
-    createdAt: Schema.DateTimeUtc,
-    createdBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     summary: Schema.String,
     revision: Schema.Number.pipe(Schema.int())
   }
@@ -292,8 +292,8 @@ export class SnapshotPublishedProfile extends Schema.TaggedClass<SnapshotPublish
     profileId: ProfileId,
     snapshotId: Schema.String,
     strategyJson: Schema.String,
-    publishedAt: Schema.DateTimeUtc,
-    publishedBy: Schema.String,
+    occurredAt: Schema.DateTimeUtc,
+    actorId: Schema.String,
     revision: Schema.Number.pipe(Schema.int())
   }
 ) {}
@@ -310,25 +310,6 @@ const ProfileEvents = N2.defineEvents(
 
 export const ProfileEvent = ProfileEvents.schema
 export type ProfileEvent = typeof ProfileEvent.Type
-
-/** Per-event metadata: which field holds the business timestamp. */
-export const ProfileEventMeta: {
-  readonly [K in ProfileEvent["_tag"]]: { readonly occurredAt: string }
-} = {
-  ProfileCreated: { occurredAt: "createdAt" },
-  MergedDataProfile: { occurredAt: "mergedAt" },
-  SnapshotCreatedProfile: { occurredAt: "createdAt" },
-  MetaDataCreated: { occurredAt: "createdAt" },
-  PersonalDataExtracted: { occurredAt: "extractedAt" },
-  ProfileBranchForked: { occurredAt: "createdAt" },
-  SnapshotPublishedProfile: { occurredAt: "publishedAt" }
-}
-
-/** Extract the business timestamp (as ISO string) from any profile event. */
-export const eventOccurredAt = (event: ProfileEvent): string => {
-  const record = event as unknown as Record<string, { toJSON(): unknown }>
-  return String(record[ProfileEventMeta[event._tag].occurredAt]!.toJSON())
-}
 
 export class ProfileError extends Schema.TaggedError<ProfileError>()(
   "ProfileError",

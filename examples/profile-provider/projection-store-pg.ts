@@ -24,7 +24,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
             ${event.revision}, ${event.schemaVersion},
             ${JSON.stringify(encodeProfile(event.maskedProfileJson))},
             ${"{}"},  ${""},  ${""},  ${""},
-            ${event.createdAt.toJSON()}, ${event.createdAt.toJSON()}
+            ${String(event.occurredAt.toJSON())}, ${String(event.occurredAt.toJSON())}
           )
           ON CONFLICT (profile_id) DO UPDATE SET
             owner_agent_id = EXCLUDED.owner_agent_id,
@@ -44,7 +44,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
               current_revision = ${event.revision},
               current_schema_version = ${event.schemaVersion},
               masked_profile_json = ${JSON.stringify(encodeProfile(event.maskedProfileJson))},
-              updated_at = ${event.mergedAt.toJSON()}
+              updated_at = ${String(event.occurredAt.toJSON())}
           WHERE profile_id = ${event.profileId}
         `.pipe(Effect.asVoid),
 
@@ -58,7 +58,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
             ${event.revision}, ${event.snapshotType},
             ${JSON.stringify(encodeProfile(event.profileJson))},
             ${event.metadataJson}, ${event.schemaVersion}, ${event.summary},
-            ${false}, ${""}, ${event.createdAt.toJSON()}, ${event.createdBy}
+            ${false}, ${""}, ${String(event.occurredAt.toJSON())}, ${event.actorId}
           )
           ON CONFLICT (snapshot_id) DO UPDATE SET
             revision = EXCLUDED.revision,
@@ -81,7 +81,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
           UPDATE profile_provider_profiles_read
           SET latest_metadata_json = ${event.metadataJson},
               current_schema_version = ${event.schemaVersion},
-              updated_at = ${event.createdAt.toJSON()}
+              updated_at = ${String(event.occurredAt.toJSON())}
           WHERE profile_id = ${event.profileId}
         `.pipe(Effect.asVoid)
       },
@@ -91,7 +91,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
           UPDATE profile_provider_profiles_read
           SET latest_pii_storage_key = ${event.piiStorageKey},
               pii_jurisdiction = ${event.jurisdiction},
-              updated_at = ${event.extractedAt.toJSON()}
+              updated_at = ${String(event.occurredAt.toJSON())}
           WHERE profile_id = ${event.profileId}
         `.pipe(Effect.asVoid),
 
@@ -100,7 +100,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
           UPDATE profile_provider_profiles_read
           SET active_branch_id = ${event.branchId},
               current_revision = ${event.revision},
-              updated_at = ${event.createdAt.toJSON()}
+              updated_at = ${String(event.occurredAt.toJSON())}
           WHERE profile_id = ${event.profileId}
         `.pipe(Effect.asVoid),
 
@@ -111,7 +111,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
             SET status = ${"published"},
                 published_snapshot_id = ${event.snapshotId},
                 current_revision = ${event.revision},
-                updated_at = ${event.publishedAt.toJSON()}
+                updated_at = ${String(event.occurredAt.toJSON())}
             WHERE profile_id = ${event.profileId}
           `.pipe(Effect.asVoid)
           yield* sql`

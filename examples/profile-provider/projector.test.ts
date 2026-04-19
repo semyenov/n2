@@ -80,8 +80,8 @@ test("projector writes through the projection store and outbox without requiring
         branchId: "main",
         schemaVersion: "1.0.0",
         maskedProfileJson: makeProfile(profileId),
-        createdAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
-        createdBy: "agent-1",
+        occurredAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
+        actorId: "agent-1",
         summary: "init",
         revision: 1
       })

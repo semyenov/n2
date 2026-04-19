@@ -97,8 +97,8 @@ test("collectReplayEvents filters journal entries by profile and revision range"
         branchId: "main",
         schemaVersion: "1.0.0",
         maskedProfileJson: makeProfile(firstProfileId),
-        createdAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
-        createdBy: "agent-1",
+        occurredAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
+        actorId: "agent-1",
         summary: "first",
         revision: 1
       })
@@ -108,8 +108,8 @@ test("collectReplayEvents filters journal entries by profile and revision range"
         branchId: "main",
         schemaVersion: "1.0.0",
         maskedProfileJson: makeProfile(secondProfileId),
-        createdAt: DateTime.unsafeMake("2026-01-01T00:00:01.000Z"),
-        createdBy: "agent-2",
+        occurredAt: DateTime.unsafeMake("2026-01-01T00:00:01.000Z"),
+        actorId: "agent-2",
         summary: "second",
         revision: 3
       })
@@ -118,8 +118,8 @@ test("collectReplayEvents filters journal entries by profile and revision range"
         branchId: "main",
         schemaVersion: "1.1.0",
         maskedProfileJson: makeProfile(firstProfileId),
-        mergedAt: DateTime.unsafeMake("2026-01-01T00:00:02.000Z"),
-        mergedBy: "agent-1",
+        occurredAt: DateTime.unsafeMake("2026-01-01T00:00:02.000Z"),
+        actorId: "agent-1",
         summary: "merge",
         sourceCount: 2,
         revision: 5

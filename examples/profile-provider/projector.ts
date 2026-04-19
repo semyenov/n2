@@ -2,7 +2,6 @@ import * as Effect from "effect/Effect"
 import { EventLog } from "@effect/experimental"
 import {
   type ProfileEvent,
-  eventOccurredAt,
   ProfileCreated,
   MergedDataProfile,
   SnapshotCreatedProfile,
@@ -21,7 +20,7 @@ const makeMessage = (event: ProfileEvent) =>
     profileId: event.profileId,
     revision: event.revision,
     eventType: event._tag,
-    occurredAt: eventOccurredAt(event),
+    occurredAt: String(event.occurredAt.toJSON()),
     payload: event
   })
 

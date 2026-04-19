@@ -90,8 +90,8 @@ const metadataEvent = (
   scopeId: string,
   metadataJson: string,
   schemaVersion: string,
-  createdAt: DateTime.Utc,
-  createdBy: string,
+  occurredAt: DateTime.Utc,
+  actorId: string,
   offset: number
 ) =>
   new MetaDataCreated({
@@ -101,8 +101,8 @@ const metadataEvent = (
     scopeId,
     metadataJson,
     schemaVersion,
-    createdAt,
-    createdBy,
+    occurredAt,
+    actorId,
     revision: nextRevision(state, offset)
   })
 
@@ -114,8 +114,8 @@ const piiEvent = (
   piiStorageKey: string,
   piiJson: string,
   jurisdiction: string,
-  extractedAt: DateTime.Utc,
-  extractedBy: string,
+  occurredAt: DateTime.Utc,
+  actorId: string,
   offset: number
 ) =>
   new PersonalDataExtracted({
@@ -126,8 +126,8 @@ const piiEvent = (
     piiStorageKey,
     piiJson,
     jurisdiction,
-    extractedAt,
-    extractedBy,
+    occurredAt,
+    actorId,
     revision: nextRevision(state, offset)
   })
 
@@ -142,8 +142,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         baseBranchId: "",
         baseRevision: 0,
         baseSnapshotId: "",
-        createdAt: event.createdAt,
-        createdBy: event.createdBy
+        createdAt: event.occurredAt,
+        createdBy: event.actorId
       })
       return {
         ...state,
@@ -160,8 +160,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
           event.branchId,
           event._tag,
           event.summary,
-          event.createdAt,
-          event.createdBy
+          event.occurredAt,
+          event.actorId
         ),
         revision: event.revision
       }
@@ -178,8 +178,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         event.branchId,
         event._tag,
         event.summary,
-        event.mergedAt,
-        event.mergedBy
+        event.occurredAt,
+        event.actorId
       ),
       revision: event.revision
     }),
@@ -198,8 +198,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
           metadataJson: event.metadataJson,
           schemaVersion: event.schemaVersion,
           summary: event.summary,
-          createdAt: event.createdAt,
-          createdBy: event.createdBy,
+          createdAt: event.occurredAt,
+          createdBy: event.actorId,
           published: false,
           strategyJson: ""
         })
@@ -210,8 +210,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         event.branchId,
         event._tag,
         event.summary,
-        event.createdAt,
-        event.createdBy
+        event.occurredAt,
+        event.actorId
       ),
       revision: event.revision
     }),
@@ -231,8 +231,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         event.branchId,
         event._tag,
         `${event.scope}:${event.scopeId}`,
-        event.createdAt,
-        event.createdBy
+        event.occurredAt,
+        event.actorId
       ),
       revision: event.revision
     }),
@@ -247,8 +247,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         event.branchId,
         event._tag,
         `${event.scope}:${event.scopeId}`,
-        event.extractedAt,
-        event.extractedBy
+        event.occurredAt,
+        event.actorId
       ),
       revision: event.revision
     }),
@@ -263,8 +263,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
           baseBranchId: event.baseBranchId,
           baseRevision: event.baseRevision,
           baseSnapshotId: event.baseSnapshotId,
-          createdAt: event.createdAt,
-          createdBy: event.createdBy
+          createdAt: event.occurredAt,
+          createdBy: event.actorId
         })
       ],
       revisions: appendRevision(
@@ -273,8 +273,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         event.branchId,
         event._tag,
         event.summary,
-        event.createdAt,
-        event.createdBy
+        event.occurredAt,
+        event.actorId
       ),
       revision: event.revision
     }),
@@ -293,8 +293,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         state.activeBranchId,
         event._tag,
         event.snapshotId,
-        event.publishedAt,
-        event.publishedBy
+        event.occurredAt,
+        event.actorId
       ),
       revision: event.revision
     })
@@ -314,8 +314,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             branchId: command.branchId,
             schemaVersion: command.schemaVersion,
             maskedProfileJson: command.maskedProfileJson,
-            createdAt: now,
-            createdBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             summary: command.summary,
             revision: nextRevision(state, 0)
           }),
@@ -326,8 +326,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             scopeId: command.profileId,
             metadataJson: command.metadataJson,
             schemaVersion: command.schemaVersion,
-            createdAt: now,
-            createdBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             revision: nextRevision(state, 1)
           })
         ]
@@ -340,8 +340,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             piiStorageKey: command.piiStorageKey,
             piiJson: command.piiJson,
             jurisdiction: command.piiJurisdiction,
-            extractedAt: now,
-            extractedBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             revision: nextRevision(state, events.length)
           }))
         }
@@ -364,8 +364,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             branchId: command.branchId,
             schemaVersion: command.schemaVersion,
             maskedProfileJson: command.maskedProfileJson,
-            mergedAt: now,
-            mergedBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             summary: command.summary,
             sourceCount: command.sources.length,
             revision: nextRevision(state, 0)
@@ -424,8 +424,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             baseBranchId: command.baseBranchId,
             baseRevision: command.baseRevision,
             baseSnapshotId: command.baseSnapshotId,
-            createdAt: now,
-            createdBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             summary: command.summary,
             revision: nextRevision(state, 0)
           }),
@@ -465,8 +465,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             profileJson: command.profileJson,
             metadataJson: command.metadataJson,
             schemaVersion: command.schemaVersion,
-            createdAt: now,
-            createdBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             summary: command.summary,
             revision: nextRevision(state, 0)
           }),
@@ -515,8 +515,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
             profileId: command.profileId,
             snapshotId: command.snapshotId,
             strategyJson: command.strategyJson,
-            publishedAt: now,
-            publishedBy: command.actorId,
+            occurredAt: now,
+            actorId: command.actorId,
             revision: nextRevision(state, 0)
           }),
           metadataEvent(

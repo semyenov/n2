@@ -48,9 +48,9 @@ export const makeSnapshotService = <State, Encoded>(config: {
   const idCol = config.idColumn ?? "entity_id"
 
   return {
-    makeLive: <Tag extends Context.Tag<any, SnapshotService<State>>>(
-      tag: Tag
-    ): Layer.Layer<Context.Tag.Identifier<Tag>, never, SqlClient> =>
+    makeLive: <I>(
+      tag: Context.Tag<I, SnapshotService<State>>
+    ): Layer.Layer<I, never, SqlClient> =>
       Layer.effect(
         tag,
         Effect.gen(function* () {

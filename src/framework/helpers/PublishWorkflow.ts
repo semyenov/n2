@@ -44,10 +44,10 @@ interface PublisherService<Message> {
  * @param config.publisherTag - Context.Tag for the publisher service
  * @param config.idOf - Extract unique ID from message (defaults to `m.id`)
  */
-export const makePublishWorkflow = <Message extends { readonly id: string }>(config: {
+export const makePublishWorkflow = <Message extends { readonly id: string }, PublisherI = unknown>(config: {
   readonly name: string
   readonly messageSchema: Workflow.AnyStructSchema & Schema.Schema<Message>
-  readonly publisherTag: Context.Tag</* identifier */ any, PublisherService<Message>>
+  readonly publisherTag: Context.Tag<PublisherI, PublisherService<Message>>
   readonly idOf?: (message: Message) => string
 }) => {
   const idOf = config.idOf ?? ((m: Message) => m.id)
