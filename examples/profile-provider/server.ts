@@ -65,5 +65,5 @@ BunRuntime.runMain(
     yield* Effect.log(`Profile provider service (dev mode) on http://localhost:${port}`)
     yield* Effect.log("Endpoints: CreateProfile | MergeProfileData | CreateProfileSnapshot | PublishProfileSnapshot")
     yield* Effect.never
-  }).pipe(Effect.provide(ServerLayer)) as Effect.Effect<void, never, never>
+  }).pipe(Effect.provide(ServerLayer))
 )

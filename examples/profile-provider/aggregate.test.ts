@@ -553,3 +553,498 @@ test("snapshot recovery: GetProfile loads state from snapshot store", async () =
     expect(state.ownerAgentId).toBe("agent-x")
   }))
 })
+
+// ---------------------------------------------------------------------------
+// A. Error edge cases
+// ---------------------------------------------------------------------------
+
+test("ForkProfileBranch with unknown baseBranchId fails", async () => {
+  const profileId = makeProfileId(30)
+  const { state } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const err = await run(handle(state, new ForkProfileBranch({
+    profileId,
+    branchId: "alt",
+    label: "Alt",
+    baseBranchId: "nonexistent",
+    baseRevision: 0,
+    baseSnapshotId: "",
+    metadataJson: "{}",
+    schemaVersion: "1.0",
+    actorId: "a",
+    summary: "fork"
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+  expect(err.message).toContain("Unknown base branch")
+})
+
+test("ForkProfileBranch with unknown baseSnapshotId fails", async () => {
+  const profileId = makeProfileId(31)
+  const { state } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const err = await run(handle(state, new ForkProfileBranch({
+    profileId,
+    branchId: "alt",
+    label: "Alt",
+    baseBranchId: "main",
+    baseRevision: state.revision,
+    baseSnapshotId: "nonexistent-snap",
+    metadataJson: "{}",
+    schemaVersion: "1.0",
+    actorId: "a",
+    summary: "fork"
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+  expect(err.message).toContain("Unknown base snapshot")
+})
+
+test("MergeProfileData rejects mismatched profile uuid", async () => {
+  const profileId = makeProfileId(32)
+  const { state } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const err = await run(handle(state, new MergeProfileData({
+    profileId,
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(makeProfileId(99), "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "merge",
+    sources: []
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+  expect(err.message).toContain("maskedProfileJson.uuid must match")
+})
+
+test("CreateProfileSnapshot on unknown branch fails", async () => {
+  const profileId = makeProfileId(33)
+  const { state } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const err = await run(handle(state, new CreateProfileSnapshot({
+    profileId,
+    branchId: "nonexistent",
+    snapshotId: "snap-x",
+    snapshotType: "MANUAL",
+    schemaVersion: "1.0",
+    profileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "snap"
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+  expect(err.message).toContain("Unknown branch")
+})
+
+test("CreateProfileSnapshot rejects mismatched profile uuid", async () => {
+  const profileId = makeProfileId(34)
+  const { state } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const err = await run(handle(state, new CreateProfileSnapshot({
+    profileId,
+    branchId: "main",
+    snapshotId: "snap-x",
+    snapshotType: "MANUAL",
+    schemaVersion: "1.0",
+    profileJson: makeProfile(makeProfileId(99), "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "snap"
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+  expect(err.message).toContain("profileJson.uuid must match")
+})
+
+test("PublishProfileSnapshot on empty profile fails", async () => {
+  const err = await run(handle(initialProfileState, new PublishProfileSnapshot({
+    profileId: makeProfileId(35),
+    snapshotId: "snap-x",
+    strategyJson: "{}",
+    metadataJson: "{}",
+    schemaVersion: "1.0",
+    actorId: "a"
+  })).pipe(Effect.flip))
+  expect(err._tag).toBe("ProfileError")
+  expect(err.message).toContain("Profile does not exist")
+})
+
+// ---------------------------------------------------------------------------
+// B. PII conditional event counts
+// ---------------------------------------------------------------------------
+
+test("CreateProfile without PII produces exactly 2 events", async () => {
+  const profileId = makeProfileId(40)
+  const { state, events } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  expect(events.length).toBe(2)
+  expect(events.map((e) => e._tag)).toEqual(["ProfileCreated", "MetaDataCreated"])
+  expect(state.revision).toBe(2)
+})
+
+test("MergeProfileData without PII produces 2 events", async () => {
+  const profileId = makeProfileId(41)
+  const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const { events } = await run(handle(s1, new MergeProfileData({
+    profileId,
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Singer"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "merge",
+    sources: []
+  })))
+  expect(events.length).toBe(2)
+  expect(events.map((e) => e._tag)).toEqual(["MergedDataProfile", "MetaDataCreated"])
+})
+
+test("MergeProfileData with PII produces 3 events", async () => {
+  const profileId = makeProfileId(42)
+  const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const { events } = await run(handle(s1, new MergeProfileData({
+    profileId,
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Singer"),
+    metadataJson: "{}",
+    piiStorageKey: "pii/key",
+    piiJson: "{\"email\":\"hidden\"}",
+    piiJurisdiction: "DE",
+    actorId: "a",
+    summary: "merge",
+    sources: []
+  })))
+  expect(events.length).toBe(3)
+  expect(events.map((e) => e._tag)).toEqual(["MergedDataProfile", "MetaDataCreated", "PersonalDataExtracted"])
+})
+
+test("CreateProfileSnapshot without PII produces 2 events", async () => {
+  const profileId = makeProfileId(43)
+  const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const { events } = await run(handle(s1, new CreateProfileSnapshot({
+    profileId,
+    branchId: "main",
+    snapshotId: "snap-nopii",
+    snapshotType: "MANUAL",
+    schemaVersion: "1.0",
+    profileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "snap"
+  })))
+  expect(events.length).toBe(2)
+  expect(events.map((e) => e._tag)).toEqual(["SnapshotCreatedProfile", "MetaDataCreated"])
+})
+
+test("CreateProfileSnapshot with PII produces 3 events", async () => {
+  const profileId = makeProfileId(44)
+  const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  const { events } = await run(handle(s1, new CreateProfileSnapshot({
+    profileId,
+    branchId: "main",
+    snapshotId: "snap-pii",
+    snapshotType: "MANUAL",
+    schemaVersion: "1.0",
+    profileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "pii/snap",
+    piiJson: "{\"ssn\":\"hidden\"}",
+    piiJurisdiction: "US",
+    actorId: "a",
+    summary: "snap"
+  })))
+  expect(events.length).toBe(3)
+  expect(events.map((e) => e._tag)).toEqual(["SnapshotCreatedProfile", "MetaDataCreated", "PersonalDataExtracted"])
+})
+
+// ---------------------------------------------------------------------------
+// C. Revision numbering
+// ---------------------------------------------------------------------------
+
+test("CreateProfile with PII produces consecutive revisions starting from 1", async () => {
+  const profileId = makeProfileId(50)
+  const { state, events } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "pii/key",
+    piiJson: "{\"email\":\"x\"}",
+    piiJurisdiction: "DE",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  expect(events.map((e) => e.revision)).toEqual([1, 2, 3])
+  expect(state.revision).toBe(3)
+})
+
+test("MergeProfileData revisions continue from prior state", async () => {
+  const profileId = makeProfileId(51)
+  const { state: s1 } = await run(handle(initialProfileState, new CreateProfile({
+    profileId,
+    ownerAgentId: "a",
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Actor"),
+    metadataJson: "{}",
+    piiStorageKey: "",
+    piiJson: "",
+    piiJurisdiction: "",
+    actorId: "a",
+    summary: "init",
+    sources: []
+  })))
+  expect(s1.revision).toBe(2)
+  const { state: s2, events } = await run(handle(s1, new MergeProfileData({
+    profileId,
+    branchId: "main",
+    schemaVersion: "1.0",
+    maskedProfileJson: makeProfile(profileId, "Singer"),
+    metadataJson: "{}",
+    piiStorageKey: "pii/key",
+    piiJson: "{\"email\":\"x\"}",
+    piiJurisdiction: "DE",
+    actorId: "a",
+    summary: "merge",
+    sources: []
+  })))
+  expect(events.map((e) => e.revision)).toEqual([3, 4, 5])
+  expect(s2.revision).toBe(5)
+})
+
+// ---------------------------------------------------------------------------
+// D. PostHandle source asset merging (handler-level)
+// ---------------------------------------------------------------------------
+
+test("handlers: CreateProfile stores source assets", async () => {
+  const { handlersLayer } = makeTestLayers()
+  const profileId = makeProfileId(60)
+
+  await runWith(handlersLayer, Effect.gen(function* () {
+    const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
+    yield* client.CreateProfile({
+      profileId,
+      ownerAgentId: "a",
+      branchId: "main",
+      schemaVersion: "1.0",
+      maskedProfileJson: makeProfile(profileId, "Actor"),
+      metadataJson: "{}",
+      piiStorageKey: "",
+      piiJson: "",
+      piiJurisdiction: "",
+      actorId: "a",
+      summary: "init",
+      sources: [sampleSource]
+    })
+    const state = yield* client.GetProfile({ profileId })
+    expect(state.sourceAssets.length).toBe(1)
+    expect(state.sourceAssets[0]?.sourceId).toBe("src-1")
+  }))
+})
+
+test("handlers: MergeProfileData deduplicates source assets by sourceId", async () => {
+  const { handlersLayer } = makeTestLayers()
+  const profileId = makeProfileId(61)
+  const sourceA = new SourceAsset({
+    sourceId: "src-a",
+    kind: "file",
+    uri: "s3://bucket/a.pdf",
+    mediaType: "application/pdf",
+    storageKey: "a.pdf",
+    summary: "Source A"
+  })
+  const sourceAUpdated = new SourceAsset({
+    sourceId: "src-a",
+    kind: "file",
+    uri: "s3://bucket/a-v2.pdf",
+    mediaType: "application/pdf",
+    storageKey: "a-v2.pdf",
+    summary: "Source A updated"
+  })
+  const sourceB = new SourceAsset({
+    sourceId: "src-b",
+    kind: "url",
+    uri: "https://example.com",
+    mediaType: "text/html",
+    storageKey: "b.html",
+    summary: "Source B"
+  })
+
+  await runWith(handlersLayer, Effect.gen(function* () {
+    const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
+    yield* client.CreateProfile({
+      profileId,
+      ownerAgentId: "a",
+      branchId: "main",
+      schemaVersion: "1.0",
+      maskedProfileJson: makeProfile(profileId, "Actor"),
+      metadataJson: "{}",
+      piiStorageKey: "",
+      piiJson: "",
+      piiJurisdiction: "",
+      actorId: "a",
+      summary: "init",
+      sources: [sourceA]
+    })
+    yield* client.MergeProfileData({
+      profileId,
+      branchId: "main",
+      schemaVersion: "1.0",
+      maskedProfileJson: makeProfile(profileId, "Singer"),
+      metadataJson: "{}",
+      piiStorageKey: "",
+      piiJson: "",
+      piiJurisdiction: "",
+      actorId: "a",
+      summary: "merge",
+      sources: [sourceAUpdated, sourceB]
+    })
+    const state = yield* client.GetProfile({ profileId })
+    expect(state.sourceAssets.length).toBe(2)
+    const ids = state.sourceAssets.map((a) => a.sourceId).sort()
+    expect(ids).toEqual(["src-a", "src-b"])
+    const updatedA = state.sourceAssets.find((a) => a.sourceId === "src-a")
+    expect(updatedA?.summary).toBe("Source A updated")
+  }))
+})

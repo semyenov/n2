@@ -36,7 +36,7 @@ const decodeEvent = makeEventDecoder<ProfileEvent>(ProfileProviderEventGroup, {
 const dispatchToStore = (event: ProfileEvent) =>
   Effect.flatMap(ProfileProviderProjectionStore, (store) => store.dispatch(event))
 
-const replay = makeReplayTool<ProfileEvent>({
+const replay = makeReplayTool({
   decodeEvent,
   entityIdOf: (event) => event.profileId,
   dispatch: dispatchToStore,
@@ -58,10 +58,9 @@ const clickhouseReadyLayer = Layer.merge(
 )
 
 const ReplayLayer = Layer.mergeAll(
-  SqlLayer,
-  SqlEventJournal.layer(),
+  Layer.provide(SqlEventJournal.layer(), SqlLayer),
   ProfileProviderClickhouseLayer,
-  ProfileProviderClickhouseBootstrapLayer,
+  Layer.provide(ProfileProviderClickhouseBootstrapLayer, ProfileProviderClickhouseLayer),
   Layer.provide(ProfileProviderProjectionStoreClickhouseLive, clickhouseReadyLayer)
 )
 
@@ -102,8 +101,8 @@ const program = Effect.gen(function* () {
   yield* Effect.log("Profile-provider projection replay completed")
 })
 
+const main = program.pipe(Effect.provide(ReplayLayer))
+
 if (import.meta.main) {
-  BunRuntime.runMain(
-    program.pipe(Effect.provide(ReplayLayer)) as Effect.Effect<void, never, never>
-  )
+  BunRuntime.runMain(main)
 }

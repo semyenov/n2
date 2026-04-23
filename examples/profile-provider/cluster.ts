@@ -19,10 +19,10 @@ import { MigrationsLayer } from "./migrate.js"
  */
 
 const ProfileProviderRpcRoute = RpcServer
-  .layerHttpRouter({ 
+  .layerHttpRouter({
     group: ProfileProviderProxyRpcs,
     path: "/rpc/profile-provider",
-    protocol: "http" 
+    protocol: "http"
   }).pipe(
     Layer.provide(ProfileProviderProxyHandlers),
     Layer.provide(RpcSerialization.layerJsonRpc())
@@ -78,5 +78,5 @@ BunRuntime.runMain(
         ShardingLayer
       )
     )
-  ) as Effect.Effect<void, never, never>
+  )
 )

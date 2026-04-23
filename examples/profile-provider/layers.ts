@@ -32,7 +32,7 @@ import {
   ProfileProviderEventPublisherLive
 } from "./workflows.js"
 
-const identityLayer   = Layer.succeed(Identity, Identity.makeRandom())
+const identityLayer = Layer.succeed(Identity, Identity.makeRandom())
 const sqlJournalLayer = SqlEventJournal.layer()
 const clickhouseLayer = ProfileProviderClickhouseLayer
 const clickhouseReadyLayer = Layer.merge(
@@ -66,7 +66,7 @@ export const InfrastructureLayer = Layer.mergeAll(
   identityLayer,
   WorkflowLayer,
   ProfileProviderOutboxPgLive,
-  ProfileProviderOutboxWorkerLive,
+  Layer.provide(ProfileProviderOutboxWorkerLive, ProfileProviderOutboxPgLive),
   EventLogLayer,
   ProfileProviderSnapshotsLive
 )
@@ -76,7 +76,7 @@ export const ClusterInfrastructureLayer = Layer.mergeAll(
   identityLayer,
   ClusterWorkflowLayer,
   ProfileProviderOutboxPgLive,
-  ProfileProviderOutboxWorkerLive,
+  Layer.provide(ProfileProviderOutboxWorkerLive, ProfileProviderOutboxPgLive),
   EventLogLayer,
   ProfileProviderSnapshotsLive
 )

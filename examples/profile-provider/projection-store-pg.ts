@@ -81,6 +81,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
           UPDATE profile_provider_profiles_read
           SET latest_metadata_json = ${event.metadataJson},
               current_schema_version = ${event.schemaVersion},
+              current_revision = ${event.revision},
               updated_at = ${String(event.occurredAt.toJSON())}
           WHERE profile_id = ${event.profileId}
         `.pipe(Effect.asVoid)
@@ -91,6 +92,7 @@ export const ProfileProviderProjectionStorePgLive = Layer.effect(
           UPDATE profile_provider_profiles_read
           SET latest_pii_storage_key = ${event.piiStorageKey},
               pii_jurisdiction = ${event.jurisdiction},
+              current_revision = ${event.revision},
               updated_at = ${String(event.occurredAt.toJSON())}
           WHERE profile_id = ${event.profileId}
         `.pipe(Effect.asVoid),
