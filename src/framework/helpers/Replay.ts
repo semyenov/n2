@@ -40,21 +40,36 @@ const parseRevision = (name: string, value: string) => {
   return parsed
 }
 
-/** Parse CLI arguments into ReplayOptions. Supports --entity-id, --min-revision, --max-revision, --reset, --no-reset, --dry-run. */
-export const parseReplayOptions = (argv: ReadonlyArray<string>, resetFromEnv: boolean): ReplayOptions => {
+/**
+ * Parse CLI arguments into ReplayOptions.
+ * Supports --entity-id, --min-revision, --max-revision, --reset, --no-reset, --dry-run.
+ *
+ * @param aliases - map from custom flag names (without `--`) to canonical names.
+ *   e.g. `{ "profile-id": "entity-id" }` makes `--profile-id` an alias for `--entity-id`.
+ */
+export const parseReplayOptions = (
+  argv: ReadonlyArray<string>,
+  resetFromEnv: boolean,
+  aliases: Readonly<Record<string, string>> = {}
+): ReplayOptions => {
   let entityId: string | undefined
   let minRevision: number | undefined
   let maxRevision: number | undefined
   let reset = resetFromEnv
   let dryRun = false
 
+  const resolve = (arg: string): string => {
+    const name = arg.startsWith("--") ? arg.slice(2) : arg
+    const canonical = aliases[name]
+    return canonical !== undefined ? `--${canonical}` : arg
+  }
+
   for (let index = 0; index < argv.length; index += 1) {
-    const arg = argv[index]
+    const arg = resolve(argv[index]!)
     switch (arg) {
-      case "--entity-id":
-      case "--profile-id": {
+      case "--entity-id": {
         const value = argv[index + 1]
-        if (!value) throw new Error(`${arg} requires a value`)
+        if (!value) throw new Error(`${argv[index]} requires a value`)
         entityId = value
         index += 1
         break
@@ -99,15 +114,21 @@ interface ReplayEvent {
   readonly revision: number
 }
 
+const canReflect = (value: unknown): value is object =>
+  (typeof value === "object" && value !== null) || typeof value === "function"
+
 /** Create a generic replay tool for an event group. */
-export const makeReplayTool = <Event extends ReplayEvent>(config: {
+export const makeReplayTool = <Event extends ReplayEvent, DispatchE, DispatchR>(config: {
   readonly decodeEvent: (entry: EventJournalApi.Entry) => Effect.Effect<Event, Error>
   readonly entityIdOf: (event: Event) => string
-  readonly dispatch: (event: Event) => Effect.Effect<void, unknown, unknown>
+  readonly dispatch: (event: Event) => Effect.Effect<void, DispatchE, DispatchR>
   readonly eventGroup: EventGroup.EventGroup.Any
 }) => {
+  const eventDefinitions = canReflect(config.eventGroup)
+    ? Reflect.get(config.eventGroup, "events")
+    : undefined
   const eventTags = new Set(
-    Object.keys((config.eventGroup as unknown as { events: Record<string, unknown> }).events)
+    canReflect(eventDefinitions) ? Object.keys(eventDefinitions) : []
   )
 
   const matchesOptions = (event: Event, options: ReplayOptions): boolean => {

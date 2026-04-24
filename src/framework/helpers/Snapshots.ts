@@ -57,13 +57,13 @@ export const makeSnapshotService = <State, Encoded>(config: {
           const sql = yield* SqlClient
           return {
             load: (entityId: string) =>
-              sql`
+              sql<{ readonly state_json: string; readonly revision: number }>`
                 SELECT state_json, revision
                 FROM ${sql(config.table)}
                 WHERE ${sql(idCol)} = ${entityId}
               `.pipe(
                 Effect.map((rows) => {
-                  const row = rows[0] as { state_json: string; revision: number } | undefined
+                  const row = rows[0]
                   if (!row) return Option.none<SnapshotEntry<State>>()
                   return Option.some({ state: decode(JSON.parse(row.state_json)), revision: row.revision })
                 })

@@ -23,7 +23,7 @@ import * as EventLogApi from "@effect/experimental/EventLog"
 import { InfrastructureLayer } from "./layers.js"
 import { handle, initialOrderState } from "./aggregate.js"
 import { OrderFulfillmentWorkflow } from "./workflows.js"
-import { OrderEventGroup, OrderEventLogSchema } from "./events.js"
+import { OrderEventLogSchema } from "./events.js"
 import { OrderSnapshots, SNAPSHOT_EVERY, type SnapshotEntry } from "./snapshots.js"
 import {
   type OrderEvent,
@@ -36,8 +36,7 @@ import {
   CreateOrder,
   AddItem,
   SubmitOrder,
-  CancelOrder,
-  GetOrder
+  CancelOrder
 } from "./contracts.js"
 
 // ---------------------------------------------------------------------------
@@ -179,6 +178,13 @@ const publishRetry = Schedule.exponential("100 millis").pipe(
   Schedule.intersect(Schedule.recurs(3))
 )
 
+const formatUnknown = (error: unknown) => {
+  if (error instanceof Error) return error.message
+  if (typeof error === "string") return error
+  const encoded = JSON.stringify(error)
+  return encoded === undefined ? Object.prototype.toString.call(error) : encoded
+}
+
 export const OrderHandlersRaw = OrderRpcs.toLayer(
   Effect.gen(function* () {
     const store     = yield* SynchronizedRef.make(new Map<string, OrderEntry>())
@@ -200,6 +206,8 @@ export const OrderHandlersRaw = OrderRpcs.toLayer(
           return publish("OrderSubmitted", { orderId: event.orderId, submittedAt: event.submittedAt })
         case "OrderCancelled":
           return publish("OrderCancelled", { orderId: event.orderId, reason: event.reason, cancelledAt: event.cancelledAt })
+        default:
+          return event satisfies never
       }
     }
 
@@ -222,7 +230,7 @@ export const OrderHandlersRaw = OrderRpcs.toLayer(
     const runCommand = (orderId: string, command: CreateOrder | AddItem | SubmitOrder | CancelOrder) => {
       const tag = command._tag
       return Effect.gen(function* () {
-        const [result, events, nextState] = yield* SynchronizedRef.modifyEffect(store, (map) =>
+        const [result, emittedEvents, nextState] = yield* SynchronizedRef.modifyEffect(store, (map) =>
           getOrLoad(map, orderId).pipe(
             Effect.flatMap(({ state, revision }) =>
               handle(state, command).pipe(
@@ -241,9 +249,9 @@ export const OrderHandlersRaw = OrderRpcs.toLayer(
             )
           )
         )
-        yield* Effect.forEach(events, publishEvent, { discard: true }).pipe(
+        yield* Effect.forEach(emittedEvents, publishEvent, { discard: true }).pipe(
           Effect.retry(publishRetry),
-          Effect.tapError((e) => Effect.logError(`[entity] event publish failed: ${String(e)}`)),
+          Effect.tapError((e) => Effect.logError(`[entity] event publish failed: ${formatUnknown(e)}`)),
           Effect.ignore
         )
         if (result.revision % SNAPSHOT_EVERY === 0) {

@@ -26,6 +26,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import type * as Context from "effect/Context"
+import type * as Scope from "effect/Scope"
 import * as ExpEventJournal from "@effect/experimental/EventJournal"
 import { Identity } from "@effect/experimental/EventLog"
 import * as EventLogApi from "@effect/experimental/EventLog"
@@ -36,10 +37,10 @@ import type { SnapshotEntry, SnapshotService } from "./Snapshots.js"
  * Creates test utilities for aggregate handler tests.
  * Provides mock snapshot store, event log, and a typed `runWith` helper.
  */
-export const makeTestAggregate = <State>(config: {
+export const makeTestAggregate = <State, Handlers = never>(config: {
   readonly eventLogSchema: EventLogApi.EventLogSchema<EventGroup.EventGroup.Any>
-  readonly noOpProjection: Layer.Layer<never, never, never>
-  readonly handlersLayer: Layer.Layer<never, never, never>
+  readonly noOpProjection: Layer.Layer<never>
+  readonly handlersLayer: Layer.Layer<Handlers>
   readonly snapshotsTag: Context.Tag</* identifier */ any, SnapshotService<State>>
 }) => {
   const testJournalLayer = ExpEventJournal.layerMemory
@@ -69,14 +70,14 @@ export const makeTestAggregate = <State>(config: {
     }
   }
 
-  const runWith = <A, E, R, P, PE, PR>(
-    handlersLayer: Layer.Layer<P, PE, PR>,
-    program: Effect.Effect<A, E, R>
+  const runWith = <A, E, R>(
+    handlersLayer: Layer.Layer<R>,
+    program: Effect.Effect<A, E, R | Scope.Scope>
   ): Promise<A> =>
     Effect.runPromise(
       Effect.scoped(program).pipe(
         Effect.provide(handlersLayer)
-      ) as unknown as Effect.Effect<A, never, never>
+      )
     )
 
   return { makeTestLayers, runWith }

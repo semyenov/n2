@@ -8,7 +8,7 @@
  * GetProfile and GetProfileHistory reach decide but return [] — they are read
  * queries handled directly by the entity layer and never run through this path.
  *
- * sourceAssets are merged in handleWithAssets() (not evolve) because asset
+ * sourceAssets are merged in entity postHandle (not evolve) because asset
  * deduplication is not event-sourced state — it is a side-effect of ingestion
  * and does not need to be replayed from the event log.
  *
@@ -21,7 +21,6 @@ import * as N2 from "../../src/framework/helpers/index.js"
 import {
   type ProfileCommand,
   type ProfileEvent,
-  type ProfileState,
   type MetadataScope,
   initialProfileState,
   ProfileProviderCommands,
@@ -35,7 +34,8 @@ import {
   SnapshotPublishedProfile,
   ProfileBranch,
   ProfileRevisionEntry,
-  ProfileSnapshot
+  ProfileSnapshot,
+  ProfileState
 } from "./contracts.js"
 
 export { initialProfileState }
@@ -131,6 +131,39 @@ const piiEvent = (
     revision: nextRevision(state, offset)
   })
 
+const profileStateFields = (state: ProfileState) => ({
+  status: state.status,
+  profileId: state.profileId,
+  ownerAgentId: state.ownerAgentId,
+  activeBranchId: state.activeBranchId,
+  currentSchemaVersion: state.currentSchemaVersion,
+  maskedProfileJson: state.maskedProfileJson,
+  latestMetadataJson: state.latestMetadataJson,
+  latestPiiStorageKey: state.latestPiiStorageKey,
+  piiJurisdiction: state.piiJurisdiction,
+  sourceAssets: state.sourceAssets,
+  branches: state.branches,
+  revisions: state.revisions,
+  snapshots: state.snapshots,
+  publishedSnapshotId: state.publishedSnapshotId,
+  revision: state.revision
+})
+
+const profileSnapshotFields = (snapshot: ProfileSnapshot) => ({
+  snapshotId: snapshot.snapshotId,
+  branchId: snapshot.branchId,
+  revision: snapshot.revision,
+  snapshotType: snapshot.snapshotType,
+  profileJson: snapshot.profileJson,
+  metadataJson: snapshot.metadataJson,
+  schemaVersion: snapshot.schemaVersion,
+  summary: snapshot.summary,
+  createdAt: snapshot.createdAt,
+  createdBy: snapshot.createdBy,
+  published: snapshot.published,
+  strategyJson: snapshot.strategyJson
+})
+
 export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
   initialState: initialProfileState,
   commands: ProfileProviderCommands.constructors,
@@ -145,8 +178,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
         createdAt: event.occurredAt,
         createdBy: event.actorId
       })
-      return {
-        ...state,
+      return new ProfileState({
+        ...profileStateFields(state),
         status: "draft" as const,
         profileId: event.profileId,
         ownerAgentId: event.ownerAgentId,
@@ -164,10 +197,10 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
           event.actorId
         ),
         revision: event.revision
-      }
+      })
     },
-    MergedDataProfile: (state, event) => ({
-      ...state,
+    MergedDataProfile: (state, event) => new ProfileState({
+      ...profileStateFields(state),
       status: "draft" as const,
       activeBranchId: event.branchId,
       currentSchemaVersion: event.schemaVersion,
@@ -183,8 +216,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
       ),
       revision: event.revision
     }),
-    SnapshotCreatedProfile: (state, event) => ({
-      ...state,
+    SnapshotCreatedProfile: (state, event) => new ProfileState({
+      ...profileStateFields(state),
       activeBranchId: event.branchId,
       currentSchemaVersion: event.schemaVersion,
       snapshots: [
@@ -215,14 +248,18 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
       ),
       revision: event.revision
     }),
-    MetaDataCreated: (state, event) => ({
-      ...state,
+    MetaDataCreated: (state, event) => new ProfileState({
+      ...profileStateFields(state),
       latestMetadataJson: event.metadataJson,
       currentSchemaVersion: event.schemaVersion,
       activeBranchId: event.branchId,
       snapshots: state.snapshots.map((snapshot) =>
         event.scope === "snapshot" && snapshot.snapshotId === event.scopeId
-          ? new ProfileSnapshot({ ...snapshot, metadataJson: event.metadataJson, schemaVersion: event.schemaVersion })
+          ? new ProfileSnapshot({
+            ...profileSnapshotFields(snapshot),
+            metadataJson: event.metadataJson,
+            schemaVersion: event.schemaVersion
+          })
           : snapshot
       ),
       revisions: appendRevision(
@@ -236,8 +273,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
       ),
       revision: event.revision
     }),
-    PersonalDataExtracted: (state, event) => ({
-      ...state,
+    PersonalDataExtracted: (state, event) => new ProfileState({
+      ...profileStateFields(state),
       latestPiiStorageKey: event.piiStorageKey,
       piiJurisdiction: event.jurisdiction,
       activeBranchId: event.branchId,
@@ -252,8 +289,8 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
       ),
       revision: event.revision
     }),
-    ProfileBranchForked: (state, event) => ({
-      ...state,
+    ProfileBranchForked: (state, event) => new ProfileState({
+      ...profileStateFields(state),
       activeBranchId: event.branchId,
       branches: [
         ...state.branches,
@@ -278,13 +315,17 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
       ),
       revision: event.revision
     }),
-    SnapshotPublishedProfile: (state, event) => ({
-      ...state,
+    SnapshotPublishedProfile: (state, event) => new ProfileState({
+      ...profileStateFields(state),
       status: "published" as const,
       publishedSnapshotId: event.snapshotId,
       snapshots: state.snapshots.map((snapshot) =>
         snapshot.snapshotId === event.snapshotId
-          ? new ProfileSnapshot({ ...snapshot, published: true, strategyJson: event.strategyJson })
+          ? new ProfileSnapshot({
+            ...profileSnapshotFields(snapshot),
+            published: true,
+            strategyJson: event.strategyJson
+          })
           : snapshot
       ),
       revisions: appendRevision(

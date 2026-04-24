@@ -17,8 +17,6 @@ import {
   CreateProfile,
   CreateProfileSnapshot,
   ForkProfileBranch,
-  GetProfile,
-  GetProfileHistory,
   MergeProfileData,
   ProfileDocument,
   ProfileError,
@@ -96,14 +94,14 @@ const NoOpProjection = EL.group(
       .handle("SnapshotPublishedProfile", (_) => Effect.void)
 )
 
-const { makeTestLayers, runWith } = makeTestAggregate<ProfileState>({
+const { makeTestLayers, runWith } = makeTestAggregate({
   eventLogSchema: ProfileProviderEventLogSchema,
   noOpProjection: NoOpProjection,
   handlersLayer: ProfileProviderHandlersRaw,
   snapshotsTag: ProfileProviderSnapshots
 })
 
-const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
   Effect.runPromise(effect)
 
 test("CreateProfile initializes draft state and metadata revisions", async () => {
@@ -514,8 +512,7 @@ test("handlers: GetProfile for unknown profile returns ProfileNotFound", async (
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
     const err = yield* client.GetProfile({ profileId }).pipe(Effect.flip)
-    expect(err._tag).toBe("ProfileNotFound")
-    expect((err as unknown as ProfileNotFound).profileId).toBe(profileId)
+    expect(err).toMatchObject({ _tag: "ProfileNotFound", profileId })
   }))
 })
 

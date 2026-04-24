@@ -67,7 +67,7 @@ test("parseReplayOptions parses profile and revision filters", () => {
     "--max-revision", "8",
     "--dry-run",
     "--no-reset"
-  ], true)).toEqual({
+  ], true, { "profile-id": "entity-id" })).toEqual({
     entityId: "profile-1",
     minRevision: 2,
     maxRevision: 8,
@@ -138,7 +138,7 @@ test("collectReplayEvents filters journal entries by profile and revision range"
       Effect.scoped,
       Effect.provide(layer),
       Effect.orDie
-    ) as unknown as Effect.Effect<ReadonlyArray<{ readonly _tag: string; readonly revision: number; readonly profileId: string }>, never, never>
+    )
   )
 
   expect(events.map((event) => ({

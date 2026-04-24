@@ -17,8 +17,9 @@ import { test, expect } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
+import type * as Scope from "effect/Scope"
 import * as ExpEventJournal from "@effect/experimental/EventJournal"
-import { EventLog, Identity } from "@effect/experimental/EventLog"
+import { Identity } from "@effect/experimental/EventLog"
 import * as EventLogApi from "@effect/experimental/EventLog"
 import { EventLog as EL } from "@effect/experimental"
 import { WorkflowEngine } from "@effect/workflow"
@@ -26,7 +27,7 @@ import { RpcTest } from "@effect/rpc"
 import { handle, initialOrderState } from "./aggregate.js"
 import {
   CreateOrder, AddItem, SubmitOrder, CancelOrder,
-  OrderState, LineItem, OrderError, OrderNotFound,
+  OrderState, LineItem,
   OrderRpcs
 } from "./contracts.js"
 import { OrderEventGroup, OrderEventLogSchema } from "./events.js"
@@ -91,18 +92,18 @@ const makeTestLayers = () => {
 // ---------------------------------------------------------------------------
 
 // Pure tests — no layer requirements.
-const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
+const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
   Effect.runPromise(effect)
 
 // Integration tests — scoped client + provided handlers layer.
-const runWith = <A>(
-  handlersLayer: Layer.Layer<any, any, never>,
-  program: Effect.Effect<A, any, any>
+const runWith = <A, E, R>(
+  handlersLayer: Layer.Layer<R>,
+  program: Effect.Effect<A, E, R | Scope.Scope>
 ): Promise<A> =>
   Effect.runPromise(
     Effect.scoped(program).pipe(
       Effect.provide(handlersLayer)
-    ) as Effect.Effect<A, never, never>
+    )
   )
 
 // ---------------------------------------------------------------------------
@@ -140,7 +141,7 @@ test("SubmitOrder with no items fails with OrderError", async () => {
   const { state: s1 } = await run(handle(initialOrderState, new CreateOrder({ orderId: "o-4", customerId: "c-1" })))
   const err = await run(handle(s1, new SubmitOrder({ orderId: "o-4" })).pipe(Effect.flip))
   expect(err._tag).toBe("OrderError")
-  expect((err as OrderError).message).toMatch(/no items/)
+  expect(err.message).toMatch(/no items/)
 })
 
 test("CreateOrder on existing order fails", async () => {
@@ -197,7 +198,7 @@ test("handlers: GetOrder for unknown order returns OrderNotFound", async () => {
     const client = yield* RpcTest.makeClient(OrderRpcs)
     const err = yield* client.GetOrder({ orderId: "unknown" }).pipe(Effect.flip)
     expect(err._tag).toBe("OrderNotFound")
-    expect((err as unknown as OrderNotFound).orderId).toBe("unknown")
+    expect(err.orderId).toBe("unknown")
   }))
 })
 

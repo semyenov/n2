@@ -22,6 +22,11 @@ export type RpcPromiseClient<Rpcs extends Rpc.Any> = {
       : never
 }
 
+type UnknownRpcMethod = (payload: unknown) => Effect.Effect<unknown, unknown>
+
+const isRpcMethod = (value: unknown): value is UnknownRpcMethod =>
+  typeof value === "function"
+
 /**
  * Creates a fully typed HTTP client for an RpcGroup.
  *
@@ -29,8 +34,8 @@ export type RpcPromiseClient<Rpcs extends Rpc.Any> = {
  * Each method is named after the command `_tag` and carries the correct
  * input/output types from the command's `Schema.TaggedRequest`.
  *
- * Uses `FetchHttpClient` (browser + Bun) and JSON serialization to match
- * the server's `RpcSerialization.layerJson`.
+ * Uses `FetchHttpClient` (browser + Bun) and JSON-RPC serialization to match
+ * the server's `RpcSerialization.layerJsonRpc()`.
  *
  * @example
  * ```ts
@@ -43,7 +48,7 @@ export const makeHttpClient = <Rpcs extends Rpc.Any>(
   url: string
 ) => {
   const protocol = RpcClient.layerProtocolHttp({ url }).pipe(
-    Layer.provide([FetchHttpClient.layer, RpcSerialization.layerJson])
+    Layer.provide([FetchHttpClient.layer, RpcSerialization.layerJsonRpc()])
   )
   return RpcClient.make(group).pipe(Effect.provide(protocol))
 }
@@ -73,7 +78,10 @@ export const makePromiseClient = <Rpcs extends Rpc.Any>(
       return (payload: unknown) =>
         Effect.gen(function* () {
           const client = yield* getClient
-          const fn = (client as Record<string, (p: unknown) => Effect.Effect<unknown>>)[method]!
+          const fn = Reflect.get(client, method)
+          if (!isRpcMethod(fn)) {
+            return yield* Effect.fail(new Error(`Unknown RPC method: ${method}`))
+          }
           return yield* fn(payload)
         }).pipe(Effect.scoped, Effect.runPromise)
     }

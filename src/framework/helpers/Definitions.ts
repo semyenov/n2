@@ -221,7 +221,7 @@ export const defineCommands = <const Members extends [CommandDefinition<Tagged>,
     persisted: boolean
   ) => {
     const [head, ...tail] = members
-    const rpcs = buildRpcTuple(primaryKey, head!, ...tail) as readonly [Rpc.Any, ...ReadonlyArray<Rpc.Any>]
+    const rpcs = buildRpcTuple(primaryKey, head, ...tail) as readonly [Rpc.Any, ...ReadonlyArray<Rpc.Any>]
     const entity = Entity.make(name, rpcs)
     return persisted
       ? entity.annotateRpcs(ClusterSchema.Persisted, true)

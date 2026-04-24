@@ -56,6 +56,16 @@ const projectionLayer = Layer.provide(
   Layer.merge(projectionStoreLayer, ProfileProviderOutboxPgLive)
 )
 
+const OutboxWorkerLayer = Layer.provide(
+  ProfileProviderOutboxWorkerLive,
+  Layer.merge(ProfileProviderOutboxPgLive, WorkflowLayer)
+)
+
+const ClusterOutboxWorkerLayer = Layer.provide(
+  ProfileProviderOutboxWorkerLive,
+  Layer.merge(ProfileProviderOutboxPgLive, ClusterWorkflowLayer)
+)
+
 const EventLogLayer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
   Layer.provide(projectionLayer),
   Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
@@ -66,7 +76,7 @@ export const InfrastructureLayer = Layer.mergeAll(
   identityLayer,
   WorkflowLayer,
   ProfileProviderOutboxPgLive,
-  ProfileProviderOutboxWorkerLive,
+  OutboxWorkerLayer,
   EventLogLayer,
   ProfileProviderSnapshotsLive
 )
@@ -76,7 +86,7 @@ export const ClusterInfrastructureLayer = Layer.mergeAll(
   identityLayer,
   ClusterWorkflowLayer,
   ProfileProviderOutboxPgLive,
-  ProfileProviderOutboxWorkerLive,
+  ClusterOutboxWorkerLayer,
   EventLogLayer,
   ProfileProviderSnapshotsLive
 )

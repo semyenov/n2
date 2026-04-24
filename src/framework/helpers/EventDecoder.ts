@@ -21,6 +21,9 @@ import type * as EventJournalApi from "@effect/experimental/EventJournal"
 
 type Tagged = { readonly _tag: string }
 
+const canReflect = (value: unknown): value is object =>
+  (typeof value === "object" && value !== null) || typeof value === "function"
+
 /**
  * Creates a decoder function that converts EventJournal entries into typed domain events.
  * Automatically builds decoders from the EventGroup's payloadMsgPack schemas and
@@ -30,12 +33,17 @@ export const makeEventDecoder = <Event extends Tagged>(
   eventGroup: EventGroup.EventGroup.Any,
   constructors: { readonly [tag: string]: new (payload: never) => Event }
 ) => {
-  const events = (eventGroup as unknown as { events: Record<string, { payloadMsgPack: Schema.Schema.All } | undefined> }).events
-  const decoders = new Map<string, (payload: unknown) => Effect.Effect<unknown>>()
+  const events = canReflect(eventGroup) ? Reflect.get(eventGroup, "events") : undefined
+  const decoders = new Map<string, (payload: unknown) => Effect.Effect<unknown, unknown>>()
 
-  for (const [tag, schema] of Object.entries(events)) {
-    if (schema) {
-      decoders.set(tag, Schema.decode(schema.payloadMsgPack as never) as (u: unknown) => Effect.Effect<unknown>)
+  if (canReflect(events)) {
+    for (const [tag, eventDefinition] of Object.entries(events)) {
+      const payloadSchema = canReflect(eventDefinition)
+        ? Reflect.get(eventDefinition, "payloadMsgPack")
+        : undefined
+      if (Schema.isSchema(payloadSchema)) {
+        decoders.set(tag, Schema.decodeUnknown(payloadSchema) as (payload: unknown) => Effect.Effect<unknown, unknown>)
+      }
     }
   }
 

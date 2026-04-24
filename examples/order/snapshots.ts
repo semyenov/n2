@@ -20,7 +20,7 @@ import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import { SqlClient } from "@effect/sql/SqlClient"
 import type { SqlError } from "@effect/sql/SqlError"
-import { LineItem, OrderState, type OrderStatus } from "./contracts.js"
+import { LineItem, OrderState, OrderStatus } from "./contracts.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -33,17 +33,24 @@ export const SNAPSHOT_EVERY = 50
 // Serialization
 // ---------------------------------------------------------------------------
 
-type SnapshotJson = {
-  status: string
-  orderId: string | null
-  customerId: string | null
-  items: Array<{ sku: string; quantity: number; price: number }>
-  totalAmount: number
-  cancelledAt: string | null
-}
+const SnapshotJson = Schema.Struct({
+  status: OrderStatus,
+  orderId: Schema.NullOr(Schema.String),
+  customerId: Schema.NullOr(Schema.String),
+  items: Schema.Array(Schema.Struct({
+    sku: Schema.String,
+    quantity: Schema.Number,
+    price: Schema.Number
+  })),
+  totalAmount: Schema.Number,
+  cancelledAt: Schema.NullOr(Schema.String)
+})
+
+type SnapshotJson = typeof SnapshotJson.Type
 
 const encodeDateTime = Schema.encodeSync(Schema.DateTimeUtc)
 const decodeDateTime = Schema.decodeSync(Schema.DateTimeUtc)
+const decodeSnapshotJson = Schema.decodeUnknownSync(SnapshotJson)
 
 const encodeState = (state: OrderState): string =>
   JSON.stringify({
@@ -59,9 +66,9 @@ const encodeState = (state: OrderState): string =>
   } satisfies SnapshotJson)
 
 const decodeState = (json: string): OrderState => {
-  const d = JSON.parse(json) as SnapshotJson
+  const d = decodeSnapshotJson(JSON.parse(json))
   return new OrderState({
-    status:      d.status as OrderStatus,
+    status:      d.status,
     orderId:     Option.fromNullable(d.orderId),
     customerId:  Option.fromNullable(d.customerId),
     items:       d.items.map(i => new LineItem(i)),
@@ -95,13 +102,13 @@ export const OrderSnapshotsLive = Layer.effect(
 
     return {
       load: (orderId) =>
-        sql`
+        sql<{ readonly state_json: string; readonly revision: number }>`
           SELECT state_json, revision
           FROM order_snapshots
           WHERE order_id = ${orderId}
         `.pipe(
           Effect.map((rows) => {
-            const row = rows[0] as { state_json: string; revision: number } | undefined
+            const row = rows[0]
             if (!row) return Option.none<SnapshotEntry>()
             return Option.some({ state: decodeState(row.state_json), revision: row.revision })
           })

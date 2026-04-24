@@ -29,19 +29,35 @@ const makeEntry = (seed: number): OutboxEntry => {
   }
 }
 
+const failingWorkflowEngine = WorkflowEngine.WorkflowEngine.of({
+  register: () => Effect.void,
+  execute: () => Effect.dieMessage("workflow execution failed"),
+  poll: () => Effect.succeed(undefined),
+  interrupt: () => Effect.void,
+  resume: () => Effect.void,
+  activityExecute: () => Effect.dieMessage("activity execution failed"),
+  deferredResult: () => Effect.succeed(undefined),
+  deferredDone: () => Effect.void,
+  scheduleClock: () => Effect.void
+})
+
 test("outbox drain dispatches claimed events and marks them dispatched", async () => {
   const entry = makeEntry(1)
   const dispatched: Array<string> = []
   const published: Array<string> = []
+  const publisherLayer = Layer.succeed(ProfileProviderEventPublisher, {
+    publish: (message) =>
+      Effect.sync(() => {
+        published.push(message.id)
+      })
+  })
+  const workflowLayer = Layer.provide(
+    Layer.provideMerge(ProfileProviderEventPublishHandlers, WorkflowEngine.layerMemory),
+    publisherLayer
+  )
 
   const layer = Layer.mergeAll(
-    Layer.provideMerge(ProfileProviderEventPublishHandlers, WorkflowEngine.layerMemory),
-    Layer.succeed(ProfileProviderEventPublisher, {
-      publish: (message) =>
-        Effect.sync(() => {
-          published.push(message.id)
-        })
-    }),
+    workflowLayer,
     Layer.succeed(ProfileProviderOutbox, {
       enqueue: (_message) => Effect.void,
       claimPending: (_limit) => Effect.succeed([entry]),
@@ -56,7 +72,7 @@ test("outbox drain dispatches claimed events and marks them dispatched", async (
   const result = await Effect.runPromise(
     Effect.scoped(drainProfileProviderOutboxOnce).pipe(
       Effect.provide(layer)
-    ) as Effect.Effect<boolean, never, never>
+    )
   )
 
   expect(result).toBe(true)
@@ -64,24 +80,27 @@ test("outbox drain dispatches claimed events and marks them dispatched", async (
   expect(dispatched).toEqual([entry.id])
 })
 
-test("outbox drain marks failures when workflow execution cannot start", async () => {
+test("outbox drain marks failures when workflow publish fails", async () => {
   const entry = makeEntry(2)
   const failures: Array<{ id: string; retryCount: number; error: string }> = []
 
-  const layer = Layer.succeed(ProfileProviderOutbox, {
-    enqueue: (_message) => Effect.void,
-    claimPending: (_limit) => Effect.succeed([entry]),
-    markDispatched: (_id) => Effect.void,
-    markFailed: (id, retryCount, error) =>
-      Effect.sync(() => {
-        failures.push({ id, retryCount, error })
-      })
-  })
+  const layer = Layer.mergeAll(
+    Layer.succeed(WorkflowEngine.WorkflowEngine, failingWorkflowEngine),
+    Layer.succeed(ProfileProviderOutbox, {
+      enqueue: (_message) => Effect.void,
+      claimPending: (_limit) => Effect.succeed([entry]),
+      markDispatched: (_id) => Effect.void,
+      markFailed: (id, retryCount, error) =>
+        Effect.sync(() => {
+          failures.push({ id, retryCount, error })
+        })
+    })
+  )
 
   const result = await Effect.runPromise(
     Effect.scoped(drainProfileProviderOutboxOnce).pipe(
       Effect.provide(layer)
-    ) as Effect.Effect<boolean, never, never>
+    )
   )
 
   expect(result).toBe(true)
@@ -91,17 +110,20 @@ test("outbox drain marks failures when workflow execution cannot start", async (
 })
 
 test("outbox drain reports no work when queue is empty", async () => {
-  const layer = Layer.succeed(ProfileProviderOutbox, {
-    enqueue: (_message) => Effect.void,
-    claimPending: (_limit) => Effect.succeed([]),
-    markDispatched: (_id) => Effect.void,
-    markFailed: (_id, _retryCount, _error) => Effect.void
-  })
+  const layer = Layer.mergeAll(
+    WorkflowEngine.layerMemory,
+    Layer.succeed(ProfileProviderOutbox, {
+      enqueue: (_message) => Effect.void,
+      claimPending: (_limit) => Effect.succeed([]),
+      markDispatched: (_id) => Effect.void,
+      markFailed: (_id, _retryCount, _error) => Effect.void
+    })
+  )
 
   const result = await Effect.runPromise(
     Effect.scoped(drainProfileProviderOutboxOnce).pipe(
       Effect.provide(layer)
-    ) as Effect.Effect<boolean, never, never>
+    )
   )
 
   expect(result).toBe(false)

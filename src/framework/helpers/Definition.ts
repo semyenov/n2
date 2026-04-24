@@ -30,14 +30,6 @@ type EvolveHandlers<State, Event extends Tagged> = {
   (state: State, event: Extract<Event, { readonly _tag: K }>) => State
 }
 
-type DecideHandlers<State, Command extends Tagged, Event extends Tagged, Err, R> = {
-  readonly [K in TagOf<Command>]:
-  (
-    state: State,
-    command: Extract<Command, { readonly _tag: K }>
-  ) => Effect.Effect<ReadonlyArray<Event>, Err, R>
-}
-
 /**
  * Looser constraint for capturing `Handlers` precisely — Err/R use `unknown`
  * (not `any`) to break the circular inference that would occur if they were
@@ -105,14 +97,17 @@ const instantiateCommand = <CurrentCommand extends Tagged>(
 const makeRoute = <Rpcs extends Rpc.Any, R>(
   group: RpcGroup.RpcGroup<Rpcs>,
   path: `/${string}`,
-  handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
-) =>
-  RpcServer
+  handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>,
+  cors: boolean
+): Layer.Layer<never, never, R> => {
+  const base = RpcServer
     .layerHttpRouter({ group, path, protocol: "http" })
     .pipe(
       Layer.provide(handlers),
       Layer.provide(RpcSerialization.layerJsonRpc())
     )
+  return (cors ? base.pipe(Layer.provide(HttpLayerRouter.cors())) : base) as Layer.Layer<never, never, R>
+}
 
 /** Options for mapping execution results when wiring to a cluster Entity. */
 export interface EntityAdapterOptions<State, Command extends Tagged, Event, Result, MappedErr, HooksR = unknown> {
@@ -264,7 +259,8 @@ export interface Definition<
   readonly toHttpRoute: <Rpcs extends Rpc.Any>(
     group: RpcGroup.RpcGroup<Rpcs>,
     path: `/${string}`,
-    handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
+    handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>,
+    options?: { readonly cors?: boolean }
   ) => Layer.Layer<never, never, R>
 }
 
@@ -346,10 +342,11 @@ export const define = <
       Type extends string,
       Rpcs extends Rpc.Any,
       Result,
-      MappedErr
+      MappedErr,
+      const Adapter extends EntityAdapterOptions<State, Command, Event, Result, MappedErr>
     >(
       entity: Entity.Entity<Type, Rpcs>,
-      adapter: EntityAdapterOptions<State, Command, Event, Result, MappedErr>,
+      adapter: Adapter,
       layerOptions?: {
         readonly maxIdleTime?: DurationInput
         readonly concurrency?: number | "unbounded"
@@ -357,7 +354,7 @@ export const define = <
     ): Layer.Layer<
       never,
       never,
-      R | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
+      R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
     > =>
       entity.toLayer(
         Effect.gen(function* () {
@@ -379,8 +376,8 @@ export const define = <
           for (const tag of commandTags(options.commands)) {
             const handlerTag = tag as keyof Entity.HandlersFrom<Rpcs>
 
-            if (adapter.overrides?.[tag]) {
-              const override = adapter.overrides[tag]!
+            const override = adapter.overrides?.[tag]
+            if (override !== undefined) {
               const OverrideCtor = commandsByTag[tag]
               handlers[handlerTag] = ((request: { readonly payload: unknown }) => {
                 const command = instantiateCommand(OverrideCtor, request.payload)
@@ -444,7 +441,7 @@ export const define = <
       ) as Layer.Layer<
         never,
         never,
-        R | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
+        R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
       >
 
     const toRpcHandlers = <
@@ -493,11 +490,12 @@ export const define = <
     const toStatefulRpcHandlers = <
       Rpcs extends Rpc.Any,
       Result,
-      MappedErr
+      MappedErr,
+      const Adapter extends StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
     >(
       group: RpcGroup.RpcGroup<Rpcs>,
-      adapter: StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
-    ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R> => {
+      adapter: Adapter
+    ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R | AdapterR<Adapter>> => {
       const metrics = adapter.metrics
         ? {
             total: Metric.counter(`${adapter.metrics.prefix}.commands.total`, { incremental: true }),
@@ -530,8 +528,8 @@ export const define = <
           for (const tag of commandTags(options.commands)) {
             const handlerTag = tag as keyof RpcGroup.HandlersFrom<Rpcs>
 
-            if (adapter.overrides?.[tag]) {
-              const override = adapter.overrides[tag]!
+            const override = adapter.overrides?.[tag]
+            if (override !== undefined) {
               handlers[handlerTag] = ((payload: unknown) => {
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
@@ -545,33 +543,33 @@ export const define = <
               const command = instantiateCommand(CommandCtor, payload)
               const entityId = adapter.entityId(command)
 
-              const run = Effect.gen(function* () {
-                const [result, events, finalState, nextRevision] = yield* SynchronizedRef.modifyEffect(store, (map) =>
+              const executeCommand = Effect.gen(function* () {
+                const [result, committedEvents, committedState, committedRevision] = yield* SynchronizedRef.modifyEffect(store, (map) =>
                   getOrLoad(map, entityId).pipe(
                     Effect.flatMap(({ state, revision: prevRevision }) =>
                       handle(state, command).pipe(
                         Effect.mapError((error) => adapter.toError(error)),
-                        Effect.map(({ events, state: next }) => {
-                          let finalState = next
+                        Effect.map(({ events: emittedEvents, state: nextState }) => {
+                          let stateToStore = nextState
                           if (adapter.postHandle) {
-                            finalState = adapter.postHandle({
-                              entityId, command, events, state: next
+                            stateToStore = adapter.postHandle({
+                              entityId, command, events: emittedEvents, state: nextState
                             })
                           }
-                          const nextRevision = prevRevision + events.length
-                          const nextMap = new Map(map).set(entityId, { state: finalState, revision: nextRevision })
+                          const updatedRevision = prevRevision + emittedEvents.length
+                          const nextMap = new Map(map).set(entityId, { state: stateToStore, revision: updatedRevision })
                           return [
                             [
                               adapter.toResult({
                                 entityId,
-                                revision: nextRevision,
+                                revision: updatedRevision,
                                 command,
-                                events,
-                                state: finalState
+                                events: emittedEvents,
+                                state: stateToStore
                               }),
-                              events,
-                              finalState,
-                              nextRevision
+                              emittedEvents,
+                              stateToStore,
+                              updatedRevision
                             ] as const,
                             nextMap
                           ] as const
@@ -581,21 +579,21 @@ export const define = <
                   )
                 )
 
-                if (adapter.afterCommit && events.length > 0) {
+                if (adapter.afterCommit && committedEvents.length > 0) {
                   yield* adapter.afterCommit({
                     entityId,
-                    revision: nextRevision,
+                    revision: committedRevision,
                     command,
-                    events,
-                    state: finalState
+                    events: committedEvents,
+                    state: committedState
                   }).pipe(
                     Effect.tapError((e) => Effect.logError(`afterCommit failed: ${String(e)}`)),
                     Effect.ignore
                   )
                 }
 
-                if (adapter.snapshots && nextRevision > 0 && nextRevision % adapter.snapshots.every === 0) {
-                  yield* adapter.snapshots.save(entityId, finalState, nextRevision).pipe(
+                if (adapter.snapshots && committedRevision > 0 && committedRevision % adapter.snapshots.every === 0) {
+                  yield* adapter.snapshots.save(entityId, committedState, committedRevision).pipe(
                     Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
                     Effect.ignore
                   )
@@ -605,13 +603,13 @@ export const define = <
               })
 
               if (metrics) {
-                return run.pipe(
+                return executeCommand.pipe(
                   Metric.trackDuration(Metric.tagged(metrics.latency, "command", tag)),
                   Effect.tap(() => Metric.increment(Metric.tagged(metrics.total, "command", tag))),
                   Effect.tapError(() => Metric.increment(Metric.tagged(metrics.errors, "command", tag)))
                 )
               }
-              return run
+              return executeCommand
             }) as RpcGroup.HandlersFrom<Rpcs>[typeof handlerTag]
           }
 
@@ -619,14 +617,15 @@ export const define = <
             handlers as Partial<RpcGroup.HandlersFrom<Rpcs>> & RpcGroup.HandlersFrom<Rpcs>
           )
         })
-      ) as Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
+      ) as Layer.Layer<Rpc.ToHandler<Rpcs>, never, R | AdapterR<Adapter>>
     }
 
     const toHttpRoute = <Rpcs extends Rpc.Any>(
       group: RpcGroup.RpcGroup<Rpcs>,
       path: `/${string}`,
-      handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
-    ) => makeRoute(group, path, handlers) as Layer.Layer<never, never, R>
+      handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>,
+      options?: { readonly cors?: boolean }
+    ) => makeRoute(group, path, handlers, options?.cors ?? false)
 
     return {
       initialState: options.initialState,

@@ -50,7 +50,7 @@ export const makeProfileProviderEventMessage = (options: {
       eventType: options.eventType,
       profileId: options.profileId,
       revision: options.revision,
-      ...(options.headers ?? {})
+      ...options.headers
     }
   })
 

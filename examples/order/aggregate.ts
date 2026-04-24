@@ -13,8 +13,8 @@ import * as Option from "effect/Option"
 import {
   type OrderEvent,
   type OrderCommand,
-  type OrderState,
   initialOrderState,
+  OrderState,
   OrderCreated,
   ItemAdded,
   OrderSubmitted,
@@ -35,25 +35,46 @@ export { initialOrderState }
 export const evolve = (state: OrderState, event: OrderEvent): OrderState => {
   switch (event._tag) {
     case "OrderCreated":
-      return {
-        ...state,
+      return new OrderState({
         status: "draft" as const,
         orderId: Option.some(event.orderId),
-        customerId: Option.some(event.customerId)
-      }
+        customerId: Option.some(event.customerId),
+        items: state.items,
+        totalAmount: state.totalAmount,
+        cancelledAt: state.cancelledAt
+      })
     case "ItemAdded":
-      return {
-        ...state,
+      return new OrderState({
+        status: state.status,
+        orderId: state.orderId,
+        customerId: state.customerId,
         items: [
           ...state.items,
           new LineItem({ sku: event.sku, quantity: event.quantity, price: event.price })
         ],
-        totalAmount: state.totalAmount + event.price * event.quantity
-      }
+        totalAmount: state.totalAmount + event.price * event.quantity,
+        cancelledAt: state.cancelledAt
+      })
     case "OrderSubmitted":
-      return { ...state, status: "submitted" as const }
+      return new OrderState({
+        status: "submitted" as const,
+        orderId: state.orderId,
+        customerId: state.customerId,
+        items: state.items,
+        totalAmount: state.totalAmount,
+        cancelledAt: state.cancelledAt
+      })
     case "OrderCancelled":
-      return { ...state, status: "cancelled" as const, cancelledAt: Option.some(event.cancelledAt) }
+      return new OrderState({
+        status: "cancelled" as const,
+        orderId: state.orderId,
+        customerId: state.customerId,
+        items: state.items,
+        totalAmount: state.totalAmount,
+        cancelledAt: Option.some(event.cancelledAt)
+      })
+    default:
+      return event satisfies never
   }
 }
 
@@ -115,6 +136,8 @@ export const decide = (
       // GetOrder is a read — it never reaches decide.
       // The entity layer reads directly from stateRef / the in-memory map.
       return Effect.succeed([])
+    default:
+      return command satisfies never
   }
 }
 

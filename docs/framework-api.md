@@ -49,6 +49,8 @@ MyAggregate.toEntityLayer(entity, {
 
 The `overrides` map is typed — each key narrows `command` to the specific command type for that tag.
 
+Snapshot, override, and `afterCommit` requirements are preserved in the returned layer type. If a hook reads a service from context, the caller must provide that service instead of casting the entrypoint effect to `never`.
+
 ---
 
 ## `toStatefulRpcHandlers` — StatefulRpcAdapterOptions
@@ -117,6 +119,8 @@ const outbox = makeOutboxService({
 })
 ```
 
+`makeDrainOnce` preserves storage failures as `SqlError` and preserves publisher requirements in the returned `Effect`; the worker layer catches storage failures inside its loop.
+
 ### `makePublishWorkflow({ name, messageSchema, publisherTag })`
 
 Durable publish with exponential backoff retry via `@effect/workflow`. Returns `.workflow`, `.start(message)`, `.handlers` (Layer).
@@ -130,6 +134,8 @@ const pw = makePublishWorkflow({
 export const startPublish = pw.start
 export const publishHandlers = pw.handlers
 ```
+
+`.start(message)` requires a `WorkflowEngine`. `.handlers` requires the configured publisher service and should be composed with the workflow engine layer in tests and entrypoints.
 
 ### `makeEventDecoder(eventGroup, constructors)`
 
@@ -152,7 +158,7 @@ CLI argument parser for `--entity-id`, `--min-revision`, `--max-revision`, `--re
 Creates test infrastructure. Returns `.makeTestLayers()` (mock snapshots + wired handlers) and `.runWith(layer, program)`.
 
 ```ts
-const { makeTestLayers, runWith } = makeTestAggregate<MyState>({
+const { makeTestLayers, runWith } = makeTestAggregate({
   eventLogSchema: MyEventLogSchema,
   noOpProjection: MyNoOpProjection,
   handlersLayer: MyHandlersRaw,

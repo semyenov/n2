@@ -25,6 +25,7 @@ import type * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { Activity, DurableClock, Workflow, WorkflowEngine } from "@effect/workflow"
+import type { WorkflowInstance } from "@effect/workflow/WorkflowEngine"
 import { computeRetryDelaySeconds } from "./Outbox.js"
 
 export class EventPublishError extends Schema.TaggedError<EventPublishError>()(
@@ -66,12 +67,12 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
       })
     })
 
-  const retryPublish = (
+  function retryPublish(
     message: Message,
     executionId: string,
     attempt: number
-  ): Effect.Effect<void, never, never> =>
-    publishActivity(message, attempt).pipe(
+  ): Effect.Effect<void, never, PublisherI | WorkflowEngine.WorkflowEngine | WorkflowInstance> {
+    return publishActivity(message, attempt).pipe(
       Effect.catchTag("EventPublishError", (error) => {
         const delaySeconds = computeRetryDelaySeconds(attempt)
         return Effect.logWarning(`[${config.name}] retry scheduled`).pipe(
@@ -90,7 +91,8 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
           Effect.zipRight(retryPublish(message, executionId, attempt + 1))
         )
       })
-    ) as Effect.Effect<void, never, never>
+    )
+  }
 
   const workflow = Workflow.make({
     name: config.name,
@@ -99,10 +101,10 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
     idempotencyKey: idOf
   })
 
-  const start = (message: Message) =>
+  const start = (message: Message): Effect.Effect<void, never, WorkflowEngine.WorkflowEngine> =>
     Effect.gen(function* () {
       const engine = yield* Effect.orDie(Effect.serviceOptional(WorkflowEngine.WorkflowEngine))
-      return yield* engine.execute(workflow, {
+      yield* engine.execute(workflow, {
         executionId: idOf(message),
         payload: message,
         discard: true
@@ -111,7 +113,7 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
 
   const handlers = workflow.toLayer(
     (payload, executionId) =>
-      retryPublish(payload, executionId, 1).pipe(
+      retryPublish(payload, executionId, 0).pipe(
         Effect.zipRight(
           Effect.logInfo(`[${config.name}] completed`).pipe(
             Effect.annotateLogs({

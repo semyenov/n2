@@ -6,6 +6,9 @@
  * Provides: enqueue messages during projections, claim/dispatch/retry
  * in a background worker with exponential backoff.
  *
+ * **Requires PostgreSQL.** `claimPending` uses `FOR UPDATE SKIP LOCKED`
+ * which is a Postgres extension and is not supported by SQLite or MySQL.
+ *
  * The domain creates the SQL table via migrations. Expected schema:
  * ```sql
  * CREATE TABLE <table> (
@@ -91,6 +94,7 @@ const makeEnqueue = <Message>(sql: SqlClientInstance, config: OutboxConfig<Messa
     `.pipe(Effect.asVoid)
   }
 
+// FOR UPDATE SKIP LOCKED is a Postgres extension — see module-level note.
 const makeClaimPending = <Message>(sql: SqlClientInstance, config: OutboxConfig<Message>) =>
   (limit: number) => {
     const now = nowIso()
@@ -185,12 +189,12 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
     readonly outbox: Context.Tag<I, OutboxService<Message>>
     readonly publish: (message: Message) => Effect.Effect<void, unknown, PublishR>
     readonly batchSize?: number
-  }): Effect.Effect<boolean, never, I | PublishR> =>
+  }): Effect.Effect<boolean, SqlError, I | PublishR> =>
     Effect.gen(function* () {
       const outbox = yield* options.outbox
       const entries = yield* outbox.claimPending(options.batchSize ?? 50)
 
-      if (entries.length === 0) return false as const
+      if (entries.length === 0) return false
 
       yield* Effect.forEach(entries, (entry) =>
         options.publish(entry.message).pipe(
@@ -210,8 +214,8 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
           )
         ), { discard: true, concurrency: 1 })
 
-      return true as const
-    }) as Effect.Effect<boolean, never, I | PublishR>,
+      return true
+    }),
 
   /**
    * Create a Layer that runs a background worker draining the outbox.
@@ -242,7 +246,7 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
         yield* Effect.sleep(idleDelay)
       }
       return yield* loop
-    }) as Effect.Effect<never, never, I | PublishR>
+    })
 
     return Layer.scopedDiscard(
       Effect.forkScoped(loop).pipe(Effect.asVoid)

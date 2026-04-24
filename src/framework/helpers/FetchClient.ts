@@ -10,6 +10,12 @@
 import type { Rpc, RpcGroup } from "@effect/rpc"
 import type { RpcPromiseClient } from "./Client.js"
 
+const isObject = (value: unknown): value is object =>
+  typeof value === "object" && value !== null
+
+const getField = (value: object, key: string): unknown =>
+  Reflect.get(value, key)
+
 /**
  * Creates a fully typed, Promise-based HTTP client using plain `fetch`.
  *
@@ -46,18 +52,26 @@ export const makeFetchClient = <Rpcs extends Rpc.Any>(
           throw new Error(`HTTP ${response.status}: ${response.statusText}`)
         }
 
-        const [item] = await response.json() as [{ result?: unknown; error?: { _tag?: string; message: string; data?: unknown } }]
-
-        if (item.error !== undefined) {
-          // layerJsonRpc wraps typed errors in { _tag: "Cause", data: { _tag: "Fail", error: ... } }
-          const err = item.error
-          if (err._tag === "Cause" && typeof err.data === "object" && err.data !== null) {
-            const cause = err.data as { _tag?: string; error?: unknown }
-            if (cause._tag === "Fail" && cause.error !== undefined) throw cause.error
-          }
-          throw err
+        const json = await response.json()
+        if (!Array.isArray(json) || json.length === 0 || !isObject(json[0])) {
+          throw new Error("Invalid JSON-RPC response")
         }
-        return item.result
+
+        const item = json[0]
+        const error = getField(item, "error")
+
+        if (error !== undefined) {
+          // layerJsonRpc wraps typed errors in { _tag: "Cause", data: { _tag: "Fail", error: ... } }
+          if (isObject(error) && getField(error, "_tag") === "Cause") {
+            const data = getField(error, "data")
+            if (isObject(data) && getField(data, "_tag") === "Fail") {
+              const causeError = getField(data, "error")
+              if (causeError !== undefined) throw causeError
+            }
+          }
+          throw error
+        }
+        return getField(item, "result")
       }
     }
   })

@@ -61,15 +61,17 @@ test("projector writes through the projection store and outbox without requiring
     markFailed: () => Effect.void
   }
 
-  const layer = Layer.mergeAll(
-    journalLayer,
-    identityLayer,
-    Layer.succeed(ProfileProviderProjectionStore, noOpHandlers),
-    Layer.succeed(ProfileProviderOutbox, noOpOutbox),
-    EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
-      Layer.provide(ProfileProviderProjectionLayer),
-      Layer.provide(Layer.merge(journalLayer, identityLayer))
+  const projectionLayer = Layer.provide(
+    ProfileProviderProjectionLayer,
+    Layer.merge(
+      Layer.succeed(ProfileProviderProjectionStore, noOpHandlers),
+      Layer.succeed(ProfileProviderOutbox, noOpOutbox)
     )
+  )
+
+  const layer = EventLogApi.layer(ProfileProviderEventLogSchema).pipe(
+    Layer.provide(projectionLayer),
+    Layer.provide(Layer.merge(journalLayer, identityLayer))
   )
 
   await Effect.runPromise(
@@ -89,7 +91,7 @@ test("projector writes through the projection store and outbox without requiring
     }).pipe(
       Effect.scoped,
       Effect.provide(layer)
-    ) as Effect.Effect<void, never, never>
+    )
   )
 
   expect(projected).toEqual([{ tag: "ProfileCreated" }])

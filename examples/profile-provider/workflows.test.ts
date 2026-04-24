@@ -6,8 +6,7 @@ import {
   makeProfileProviderEventMessage,
   ProfileEventPublishWorkflow,
   ProfileProviderEventPublishHandlers,
-  ProfileProviderEventPublisher,
-  startProfileEventPublish
+  ProfileProviderEventPublisher
 } from "./workflows.js"
 
 const makeMessage = (seed: number, eventType = "ProfileCreated") =>
@@ -43,24 +42,32 @@ test("publish workflow is idempotent for the same event id", async () => {
   const published: Array<string> = []
   const message = makeMessage(2)
 
-  const testLayer = Layer.mergeAll(
+  const publisherLayer = Layer.succeed(ProfileProviderEventPublisher, {
+    publish: (event) =>
+      Effect.sync(() => {
+        published.push(event.id)
+      })
+  })
+  const testLayer = Layer.provide(
     Layer.provideMerge(ProfileProviderEventPublishHandlers, WorkflowEngine.layerMemory),
-    Layer.succeed(ProfileProviderEventPublisher, {
-      publish: (event) =>
-        Effect.sync(() => {
-          published.push(event.id)
-        })
-    })
+    publisherLayer
   )
 
-  await Effect.gen(function* () {
-    yield* startProfileEventPublish(message)
-    yield* startProfileEventPublish(message)
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(testLayer)
-  ).pipe(
-    (effect) => Effect.runPromise(effect as Effect.Effect<void, never, never>)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const workflowEngine = yield* Effect.orDie(Effect.serviceOptional(WorkflowEngine.WorkflowEngine))
+      yield* workflowEngine.execute(ProfileEventPublishWorkflow, {
+        executionId: message.id,
+        payload: message
+      })
+      yield* workflowEngine.execute(ProfileEventPublishWorkflow, {
+        executionId: message.id,
+        payload: message
+      })
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(testLayer)
+    )
   )
 
   expect(published).toEqual([message.id])
@@ -71,31 +78,32 @@ test("publish workflow retries after a failed publish and completes", async () =
   const published: Array<string> = []
   const message = makeMessage(3)
 
-  const testLayer = Layer.mergeAll(
+  const publisherLayer = Layer.succeed(ProfileProviderEventPublisher, {
+    publish: (event) =>
+      Effect.sync(() => {
+        attempts += 1
+        if (attempts === 1) {
+          throw new Error("boom")
+        }
+        published.push(event.id)
+      })
+  })
+  const testLayer = Layer.provide(
     Layer.provideMerge(ProfileProviderEventPublishHandlers, WorkflowEngine.layerMemory),
-    Layer.succeed(ProfileProviderEventPublisher, {
-      publish: (event) =>
-        Effect.sync(() => {
-          attempts += 1
-          if (attempts === 1) {
-            throw new Error("boom")
-          }
-          published.push(event.id)
-        })
-    })
+    publisherLayer
   )
 
-  await Effect.gen(function* () {
-    const workflowEngine = yield* Effect.orDie(Effect.serviceOptional(WorkflowEngine.WorkflowEngine))
-    yield* workflowEngine.execute(ProfileEventPublishWorkflow, {
-      executionId: message.id,
-      payload: message
-    })
-  }).pipe(
-    Effect.scoped,
-    Effect.provide(testLayer)
-  ).pipe(
-    (effect) => Effect.runPromise(effect as Effect.Effect<void, never, never>)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const workflowEngine = yield* Effect.orDie(Effect.serviceOptional(WorkflowEngine.WorkflowEngine))
+      yield* workflowEngine.execute(ProfileEventPublishWorkflow, {
+        executionId: message.id,
+        payload: message
+      })
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(testLayer)
+    )
   )
 
   expect(attempts).toBe(2)

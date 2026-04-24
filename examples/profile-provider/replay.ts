@@ -36,7 +36,7 @@ const decodeEvent = makeEventDecoder<ProfileEvent>(ProfileProviderEventGroup, {
 const dispatchToStore = (event: ProfileEvent) =>
   Effect.flatMap(ProfileProviderProjectionStore, (store) => store.dispatch(event))
 
-const replay = makeReplayTool<ProfileEvent>({
+const replay = makeReplayTool({
   decodeEvent,
   entityIdOf: (event) => event.profileId,
   dispatch: dispatchToStore,
@@ -57,17 +57,19 @@ const clickhouseReadyLayer = Layer.merge(
   Layer.provide(ProfileProviderClickhouseBootstrapLayer, ProfileProviderClickhouseLayer)
 )
 
+const sqlJournalReadyLayer = Layer.provide(SqlEventJournal.layer(), SqlLayer)
+
 const ReplayLayer = Layer.mergeAll(
-  SqlLayer,
-  SqlEventJournal.layer(),
-  ProfileProviderClickhouseLayer,
-  ProfileProviderClickhouseBootstrapLayer,
+  sqlJournalReadyLayer,
+  clickhouseReadyLayer,
   Layer.provide(ProfileProviderProjectionStoreClickhouseLive, clickhouseReadyLayer)
 )
 
 const program = Effect.gen(function* () {
   const resetFromEnv = yield* Config.boolean("RESET_CLICKHOUSE").pipe(Config.withDefault(true))
-  const options = yield* Effect.sync(() => parseReplayOptions(Bun.argv.slice(2), resetFromEnv))
+  const options = yield* Effect.sync(() =>
+    parseReplayOptions(Bun.argv.slice(2), resetFromEnv, { "profile-id": "entity-id" })
+  )
   const journal = yield* EventJournalApi.EventJournal
 
   if (options.reset && !options.dryRun) {
@@ -104,6 +106,6 @@ const program = Effect.gen(function* () {
 
 if (import.meta.main) {
   BunRuntime.runMain(
-    program.pipe(Effect.provide(ReplayLayer)) as Effect.Effect<void, never, never>
+    program.pipe(Effect.provide(ReplayLayer))
   )
 }

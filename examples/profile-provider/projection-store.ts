@@ -35,6 +35,8 @@ export const makeDispatch = (handlers: Omit<ProjectionHandlers, "dispatch">) =>
       case "ProfileBranchForked": return handlers.onProfileBranchForked(event)
       case "SnapshotPublishedProfile": return handlers.onSnapshotPublishedProfile(event)
     }
+    const _exhaustive: never = event
+    return _exhaustive
   }
 
 export class ProfileProviderProjectionStore extends Context.Tag("ProfileProviderProjectionStore")<
