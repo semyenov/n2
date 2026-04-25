@@ -285,7 +285,7 @@ export class SnapshotPublishedProfile extends Schema.TaggedClass<SnapshotPublish
   }
 ) {}
 
-const ProfileEvents = N2.defineEvents(
+export const ProfileEvents = N2.defineEvents(
   ProfileCreated,
   MergedDataProfile,
   SnapshotCreatedProfile,

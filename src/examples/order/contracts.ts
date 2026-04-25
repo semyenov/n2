@@ -48,7 +48,7 @@ export class OrderCancelled extends Schema.TaggedClass<OrderCancelled>()(
   { ...OrderEventBase, reason: Schema.String }
 ) { }
 
-const OrderEvents = N2.defineEvents(
+export const OrderEvents = N2.defineEvents(
   OrderCreated,
   ItemAdded,
   OrderSubmitted,

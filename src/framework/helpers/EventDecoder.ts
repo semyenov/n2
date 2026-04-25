@@ -5,6 +5,10 @@
  * Builds a decoder function from an EventGroup + event constructors,
  * eliminating the repetitive per-event decoder boilerplate.
  *
+ * Supports optional event migrations for schema evolution. When an event
+ * payload structure changes, provide a migration function that transforms
+ * old payloads into the current shape before decoding.
+ *
  * @example
  * ```ts
  * const decodeEvent = makeEventDecoder(MyEventGroup, {
@@ -12,6 +16,17 @@
  * })
  *
  * const event = yield* decodeEvent(journalEntry)
+ * ```
+ *
+ * @example With migrations
+ * ```ts
+ * const decodeEvent = makeEventDecoder(MyEventGroup, {
+ *   OrderCreated, ItemAdded
+ * }, {
+ *   migrations: {
+ *     OrderCreated: (payload) => ({ ...payload, newField: payload.newField ?? "default" })
+ *   }
+ * })
  * ```
  */
 import * as Effect from "effect/Effect"
@@ -21,17 +36,31 @@ import type * as EventJournalApi from "@effect/experimental/EventJournal"
 
 type Tagged = { readonly _tag: string }
 
+/** Per-event migration function. Transforms a raw payload before Schema decoding. */
+type EventMigration = (payload: unknown) => unknown
+
 /**
  * Creates a decoder function that converts EventJournal entries into typed domain events.
  * Automatically builds decoders from the EventGroup's payloadMsgPack schemas and
  * instantiates the corresponding event class.
+ *
+ * @param eventGroup - EventGroup defining the payload schemas
+ * @param constructors - Map of event tag → constructor class
+ * @param options - Optional configuration
+ * @param options.migrations - Per-event payload migration functions for schema evolution
  */
 export const makeEventDecoder = <Event extends Tagged>(
   eventGroup: EventGroup.EventGroup.Any,
-  constructors: { readonly [tag: string]: new (payload: never) => Event }
+  constructors: { readonly [tag: string]: new (payload: never) => Event },
+  options?: {
+    /** Per-event migration functions that transform raw payloads before Schema decoding.
+     *  Use when event schemas evolve and old journal entries need transformation. */
+    readonly migrations?: { readonly [tag: string]: EventMigration }
+  }
 ) => {
   const events = (eventGroup as unknown as { events: Record<string, { payloadMsgPack: Schema.Schema.All } | undefined> }).events
   const decoders = new Map<string, (payload: unknown) => Effect.Effect<unknown>>()
+  const migrations = options?.migrations ?? {}
 
   for (const [tag, schema] of Object.entries(events)) {
     if (schema) {
@@ -49,8 +78,10 @@ export const makeEventDecoder = <Event extends Tagged>(
     if (!Ctor) {
       return Effect.fail(new Error(`No constructor for event: ${tag}`))
     }
-    return decoder(entry.payload).pipe(
-      Effect.map((payload) => new Ctor(payload as never)),
+    const migrate = migrations[tag]
+    const payload = migrate ? migrate(entry.payload) : entry.payload
+    return decoder(payload).pipe(
+      Effect.map((decoded) => new Ctor(decoded as never)),
       Effect.mapError((e) => new Error(`Failed to decode ${tag}: ${String(e)}`))
     )
   }

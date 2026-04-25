@@ -49,7 +49,8 @@ test("outbox drain dispatches claimed events and marks them dispatched", async (
         Effect.sync(() => {
           dispatched.push(id)
         }),
-      markFailed: (_id, _retryCount, _error) => Effect.void
+      markFailed: (_id, _retryCount, _error) => Effect.void,
+      markDeadLetter: (_id, _error) => Effect.void
     })
   )
 
@@ -75,7 +76,8 @@ test("outbox drain marks failures when workflow execution cannot start", async (
     markFailed: (id, retryCount, error) =>
       Effect.sync(() => {
         failures.push({ id, retryCount, error })
-      })
+      }),
+    markDeadLetter: (_id, _error) => Effect.void
   })
 
   const result = await Effect.runPromise(
@@ -95,13 +97,14 @@ test("outbox drain reports no work when queue is empty", async () => {
     enqueue: (_message) => Effect.void,
     claimPending: (_limit) => Effect.succeed([]),
     markDispatched: (_id) => Effect.void,
-    markFailed: (_id, _retryCount, _error) => Effect.void
+    markFailed: (_id, _retryCount, _error) => Effect.void,
+    markDeadLetter: (_id, _error) => Effect.void
   })
 
   const result = await Effect.runPromise(
     Effect.scoped(drainProfileProviderOutboxOnce).pipe(
       Effect.provide(layer)
-    ) as Effect.Effect<boolean, never, never>
+    )
   )
 
   expect(result).toBe(false)

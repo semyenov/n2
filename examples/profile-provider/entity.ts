@@ -57,21 +57,6 @@ const postHandle = ({ command, state }: { command: ProfileCommand; events: Reado
   return state
 }
 
-const readQueryOverrides = {
-  GetProfile: (_command: ProfileCommand, ctx: { readonly entityId: string; readonly getState: Effect.Effect<ProfileState> }) =>
-    Effect.flatMap(ctx.getState, (state) =>
-      state.status === "empty"
-        ? Effect.fail(new ProfileNotFound({ profileId: ctx.entityId }))
-        : Effect.succeed(state)
-    ),
-  GetProfileHistory: (_command: ProfileCommand, ctx: { readonly entityId: string; readonly getState: Effect.Effect<ProfileState> }) =>
-    Effect.flatMap(ctx.getState, (state) =>
-      state.status === "empty"
-        ? Effect.fail(new ProfileNotFound({ profileId: ctx.entityId }))
-        : Effect.succeed(toHistory(state))
-    )
-}
-
 export const ProfileProviderEntityLayer = ProfileProvider.toEntityLayer(
   ProfileProviderEntity,
   {
@@ -81,7 +66,24 @@ export const ProfileProviderEntityLayer = ProfileProvider.toEntityLayer(
       error instanceof ProfileError ? error : new ProfileError({ message: String(error) }),
     snapshots: snapshotOps,
     postHandle,
-    overrides: readQueryOverrides
+    overrides: {
+      GetProfile: (command, ctx) =>
+        ctx.getState(command.profileId).pipe(
+          Effect.flatMap((state) =>
+            state.status === "empty"
+              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
+              : Effect.succeed(state)
+          )
+        ),
+      GetProfileHistory: (command, ctx) =>
+        ctx.getState(command.profileId).pipe(
+          Effect.flatMap((state) =>
+            state.status === "empty"
+              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
+              : Effect.succeed(toHistory(state))
+          )
+        )
+    },
   },
   { maxIdleTime: "10 minutes", concurrency: "unbounded" }
 )

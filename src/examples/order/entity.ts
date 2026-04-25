@@ -33,11 +33,13 @@ export const OrderEntityLayer = Order.toEntityLayer(
         ? error
         : new OrderError({ message: String(error) }),
     overrides: {
-      GetOrder: (command, { getState }) =>
-        Effect.flatMap(getState, (state) =>
-          Option.isNone(state.orderId)
-            ? Effect.fail(new OrderNotFound({ orderId: command.orderId }))
-            : Effect.succeed(state)
+      GetOrder: (command, ctx) =>
+        ctx.getState(command.orderId).pipe(
+          Effect.flatMap((state) =>
+            Option.isNone(state.orderId)
+              ? Effect.fail(new OrderNotFound({ orderId: command.orderId }))
+              : Effect.succeed(state)
+          )
         ),
       FulfillOrder: (command) =>
         OrderFulfillmentWorkflow.execute({ orderId: command.orderId, sku: command.sku, quantity: command.quantity }).pipe(

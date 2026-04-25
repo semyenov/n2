@@ -39,6 +39,7 @@ import * as Cause from "effect/Cause"
 import type * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Metric from "effect/Metric"
 import type { DurationInput } from "effect/Duration"
 import { SqlClient, type SqlClient as SqlClientInstance } from "@effect/sql/SqlClient"
 import type { SqlError } from "@effect/sql/SqlError"
@@ -54,6 +55,7 @@ export interface OutboxService<Message> {
   readonly claimPending: (limit: number) => Effect.Effect<ReadonlyArray<OutboxEntry<Message>>, SqlError>
   readonly markDispatched: (id: string) => Effect.Effect<void, SqlError>
   readonly markFailed: (id: string, retryCount: number, error: string) => Effect.Effect<void, SqlError>
+  readonly markDeadLetter: (id: string, error: string) => Effect.Effect<void, SqlError>
 }
 
 /** Exponential backoff delay capped at 300 seconds (5 minutes). */
@@ -71,6 +73,8 @@ interface OutboxConfig<Message> {
   readonly idOf: (message: Message) => string
   readonly serialize: (message: Message) => string
   readonly deserialize: (json: string) => Message
+  /** Optional metrics prefix. When set, emits counters for dispatch, errors, and dead letters. */
+  readonly metrics?: { readonly prefix: string }
 }
 
 const nowIso = () => new Date().toISOString()
@@ -149,6 +153,19 @@ const makeMarkFailed = (sql: SqlClientInstance, table: string) =>
     `.pipe(Effect.asVoid)
   }
 
+const makeMarkDeadLetter = (sql: SqlClientInstance, table: string) =>
+  (id: string, error: string) => {
+    const now = nowIso()
+    return sql`
+      UPDATE ${sql(table)}
+      SET status = ${"dead_letter"},
+          last_error = ${error},
+          updated_at = ${now},
+          next_attempt_at = ${"never"}
+      WHERE id = ${id}
+    `.pipe(Effect.asVoid)
+  }
+
 /**
  * Creates a generic outbox service factory for a given message type.
  *
@@ -157,7 +174,16 @@ const makeMarkFailed = (sql: SqlClientInstance, table: string) =>
  * @param config.serialize - Serialize message to JSON string for storage
  * @param config.deserialize - Deserialize JSON string back to message
  */
-export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
+export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => {
+  const meters = config.metrics
+    ? {
+        dispatchTotal: Metric.counter(`${config.metrics.prefix}.dispatch.total`, { incremental: true }),
+        dispatchErrors: Metric.counter(`${config.metrics.prefix}.dispatch.errors`, { incremental: true }),
+        deadLetterTotal: Metric.counter(`${config.metrics.prefix}.dead_letter.total`, { incremental: true })
+      }
+    : undefined
+
+  return ({
   /**
    * Create a Layer that provides the outbox service backed by PostgreSQL.
    */
@@ -172,7 +198,8 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
           enqueue: makeEnqueue(sql, config),
           claimPending: makeClaimPending(sql, config),
           markDispatched: makeMarkDispatched(sql, config.table),
-          markFailed: makeMarkFailed(sql, config.table)
+          markFailed: makeMarkFailed(sql, config.table),
+          markDeadLetter: makeMarkDeadLetter(sql, config.table)
         } satisfies OutboxService<Message>
       })
     ),
@@ -185,6 +212,10 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
     readonly outbox: Context.Tag<I, OutboxService<Message>>
     readonly publish: (message: Message) => Effect.Effect<void, unknown, PublishR>
     readonly batchSize?: number
+    /** Maximum retry attempts before moving to dead letter. Default: unlimited. */
+    readonly maxRetries?: number
+    /** Called when an entry is moved to dead letter status. */
+    readonly onDeadLetter?: (entry: OutboxEntry<Message>, error: string) => Effect.Effect<void, unknown, PublishR>
   }): Effect.Effect<boolean, never, I | PublishR> =>
     Effect.gen(function* () {
       const outbox = yield* options.outbox
@@ -195,19 +226,34 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
       yield* Effect.forEach(entries, (entry) =>
         options.publish(entry.message).pipe(
           Effect.flatMap(() => outbox.markDispatched(entry.id)),
-          Effect.catchAllCause((cause) =>
-            outbox.markFailed(entry.id, entry.retryCount + 1, Cause.pretty(cause)).pipe(
+          Effect.tap(() => meters ? Metric.increment(meters.dispatchTotal) : Effect.void),
+          Effect.catchAllCause((cause) => {
+            const errorMsg = Cause.pretty(cause)
+            const nextRetryCount = entry.retryCount + 1
+            if (options.maxRetries !== undefined && nextRetryCount > options.maxRetries) {
+              return outbox.markDeadLetter(entry.id, errorMsg).pipe(
+                Effect.zipRight(meters ? Metric.increment(meters.deadLetterTotal) : Effect.void),
+                Effect.zipRight(
+                  Effect.logError("outbox entry moved to dead letter").pipe(
+                    Effect.annotateLogs({ outboxId: entry.id, retryCount: nextRetryCount, error: errorMsg })
+                  )
+                ),
+                Effect.zipRight(
+                  options.onDeadLetter
+                    ? options.onDeadLetter(entry, errorMsg).pipe(Effect.ignore)
+                    : Effect.void
+                )
+              )
+            }
+            return outbox.markFailed(entry.id, nextRetryCount, errorMsg).pipe(
+              Effect.zipRight(meters ? Metric.increment(meters.dispatchErrors) : Effect.void),
               Effect.zipRight(
                 Effect.logWarning("outbox dispatch failed").pipe(
-                  Effect.annotateLogs({
-                    outboxId: entry.id,
-                    retryCount: entry.retryCount + 1,
-                    error: Cause.pretty(cause)
-                  })
+                  Effect.annotateLogs({ outboxId: entry.id, retryCount: nextRetryCount, error: errorMsg })
                 )
               )
             )
-          )
+          })
         ), { discard: true, concurrency: 1 })
 
       return true as const
@@ -221,11 +267,17 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
     readonly publish: (message: Message) => Effect.Effect<void, unknown, PublishR>
     readonly batchSize?: number
     readonly idleDelay?: DurationInput
+    /** Maximum retry attempts before moving to dead letter. Default: unlimited. */
+    readonly maxRetries?: number
+    /** Called when an entry is moved to dead letter status. */
+    readonly onDeadLetter?: (entry: OutboxEntry<Message>, error: string) => Effect.Effect<void, unknown, PublishR>
   }): Layer.Layer<never, never, I | PublishR> => {
     const drainOnce = makeOutboxService(config).makeDrainOnce({
       outbox: options.outbox,
       publish: options.publish,
-      batchSize: options.batchSize
+      batchSize: options.batchSize,
+      maxRetries: options.maxRetries,
+      onDeadLetter: options.onDeadLetter
     })
     const idleDelay = options.idleDelay ?? "1 second"
 
@@ -245,7 +297,10 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => ({
     }) as Effect.Effect<never, never, I | PublishR>
 
     return Layer.scopedDiscard(
-      Effect.forkScoped(loop).pipe(Effect.asVoid)
+      Effect.forkScoped(
+        loop.pipe(Effect.onInterrupt(() => Effect.logInfo("outbox worker shutting down")))
+      ).pipe(Effect.asVoid)
     ) as Layer.Layer<never, never, I | PublishR>
   }
 })
+}

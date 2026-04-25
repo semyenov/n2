@@ -124,6 +124,12 @@ export interface EntityAdapterOptions<State, Command extends Tagged, Event, Resu
     readonly state: State
   }) => Result
   readonly toError: (error: unknown) => MappedErr
+  /** Runs before dispatch/override for every command. Failure rejects the command.
+   *  Use for auth, rate limiting, logging, or command validation. */
+  readonly middleware?: (ctx: {
+    readonly entityId: string
+    readonly command: Command
+  }) => Effect.Effect<void, MappedErr, HooksR>
   /** Load/save snapshots. Snapshot loading restores state on entity init. */
   readonly snapshots?: {
     readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, HooksR>
@@ -145,12 +151,15 @@ export interface EntityAdapterOptions<State, Command extends Tagged, Event, Resu
     readonly events: ReadonlyArray<Event>
     readonly state: State
   }) => Effect.Effect<void, unknown, HooksR>
+  /** Timeout for afterCommit hook. Default: 30 seconds. */
+  readonly afterCommitTimeout?: DurationInput
   /** Override specific command handlers (e.g. read queries). Bypasses dispatch entirely.
-   *  Each key narrows the command to the specific tagged member for that tag. */
+   *  Each key narrows the command to the specific tagged member for that tag.
+   *  `getState` takes an entityId for API compatibility with stateful RPC overrides. */
   readonly overrides?: {
     readonly [K in TagOf<Command>]?: (
       command: Extract<Command, { readonly _tag: K }>,
-      ctx: { readonly entityId: string; readonly getState: Effect.Effect<State> }
+      ctx: { readonly entityId: string; readonly getState: (entityId: string) => Effect.Effect<State, unknown, HooksR> }
     ) => Effect.Effect<unknown, unknown, HooksR>
   }
 }
@@ -167,6 +176,12 @@ export interface StatefulRpcAdapterOptions<State, Command extends Tagged, Event,
     readonly state: State
   }) => Result
   readonly toError: (error: unknown) => MappedErr
+  /** Runs before dispatch/override for every command. Failure rejects the command.
+   *  Use for auth, rate limiting, logging, or command validation. */
+  readonly middleware?: (ctx: {
+    readonly entityId: string
+    readonly command: Command
+  }) => Effect.Effect<void, MappedErr, HooksR>
   readonly snapshots?: {
     readonly load: (entityId: string) => Effect.Effect<Option.Option<{ readonly state: State; readonly revision: number }>, unknown, HooksR>
     readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, HooksR>
@@ -185,8 +200,12 @@ export interface StatefulRpcAdapterOptions<State, Command extends Tagged, Event,
     readonly events: ReadonlyArray<Event>
     readonly state: State
   }) => Effect.Effect<void, unknown, HooksR>
+  /** Timeout for afterCommit hook. Default: 30 seconds. */
+  readonly afterCommitTimeout?: DurationInput
   /** Auto-instrument with counters and timers: `${prefix}.commands.total`, `${prefix}.commands.errors`, `${prefix}.command.duration_ms`. */
   readonly metrics?: { readonly prefix: string }
+  /** Maximum number of entities to keep in the in-memory store. When exceeded, least-recently-accessed entries are evicted. */
+  readonly maxEntries?: number
   /** Override specific command handlers (e.g. read queries).
    *  Each key narrows the command to the specific tagged member for that tag. */
   readonly overrides?: {
@@ -384,7 +403,14 @@ export const define = <
               const OverrideCtor = commandsByTag[tag]
               handlers[handlerTag] = ((request: { readonly payload: unknown }) => {
                 const command = instantiateCommand(OverrideCtor, request.payload)
-                return (override as unknown as (cmd: Command, ctx: { entityId: string; getState: Effect.Effect<State> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId: address.entityId, getState: Ref.get(stateRef) })
+                const run = (override as unknown as (cmd: Command, ctx: { entityId: string; getState: (entityId: string) => Effect.Effect<State, unknown, unknown> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId: address.entityId, getState: (_id: string) => Ref.get(stateRef) })
+                if (adapter.middleware) {
+                  return Effect.zipRight(
+                    adapter.middleware({ entityId: address.entityId, command }),
+                    run
+                  )
+                }
+                return run
               }) as Entity.HandlersFrom<Rpcs>[typeof handlerTag]
               continue
             }
@@ -392,8 +418,11 @@ export const define = <
             const CommandCtor = commandsByTag[tag]
             handlers[handlerTag] = ((request: { readonly payload: unknown }) =>
               Effect.gen(function* () {
-                const state = yield* Ref.get(stateRef)
                 const command = instantiateCommand(CommandCtor, request.payload)
+                if (adapter.middleware) {
+                  yield* adapter.middleware({ entityId: address.entityId, command })
+                }
+                const state = yield* Ref.get(stateRef)
 
                 return yield* handle(state, command).pipe(
                   Effect.matchEffect({
@@ -420,7 +449,11 @@ export const define = <
                         if (adapter.afterCommit && result.events.length > 0) {
                           yield* adapter.afterCommit({
                             entityId: address.entityId, revision, command, events: result.events, state: finalState
-                          }).pipe(Effect.ignore)
+                          }).pipe(
+                            Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
+                            Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
+                            Effect.ignore
+                          )
                         }
 
                         return adapter.toResult({
@@ -509,8 +542,22 @@ export const define = <
       return group.toLayer(
         Effect.gen(function* () {
           const store = yield* SynchronizedRef.make(new Map<string, StateEntry>())
+          const accessOrder = new Map<string, number>()
+
+          const evictIfNeeded = (map: Map<string, StateEntry>) => {
+            if (!adapter.maxEntries || map.size <= adapter.maxEntries) return map
+            const sorted = [...accessOrder.entries()].sort((a, b) => a[1] - b[1])
+            const toEvict = sorted.slice(0, map.size - adapter.maxEntries)
+            const next = new Map(map)
+            for (const [id] of toEvict) {
+              next.delete(id)
+              accessOrder.delete(id)
+            }
+            return next
+          }
 
           const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, unknown, unknown> => {
+            accessOrder.set(entityId, Date.now())
             if (map.has(entityId)) return Effect.succeed(map.get(entityId)!)
             if (!adapter.snapshots) return Effect.succeed({ state: options.initialState, revision: 0 })
             return adapter.snapshots.load(entityId).pipe(
@@ -535,7 +582,14 @@ export const define = <
               handlers[handlerTag] = ((payload: unknown) => {
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
-                return (override as unknown as (cmd: Command, ctx: { entityId: string; getState: (entityId: string) => Effect.Effect<State, unknown, unknown> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId, getState })
+                const run = (override as unknown as (cmd: Command, ctx: { entityId: string; getState: (entityId: string) => Effect.Effect<State, unknown, unknown> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId, getState })
+                if (adapter.middleware) {
+                  return Effect.zipRight(
+                    adapter.middleware({ entityId, command }),
+                    run
+                  )
+                }
+                return run
               }) as RpcGroup.HandlersFrom<Rpcs>[typeof handlerTag]
               continue
             }
@@ -546,6 +600,9 @@ export const define = <
               const entityId = adapter.entityId(command)
 
               const run = Effect.gen(function* () {
+                if (adapter.middleware) {
+                  yield* adapter.middleware({ entityId, command })
+                }
                 const [result, events, finalState, nextRevision] = yield* SynchronizedRef.modifyEffect(store, (map) =>
                   getOrLoad(map, entityId).pipe(
                     Effect.flatMap(({ state, revision: prevRevision }) =>
@@ -559,7 +616,7 @@ export const define = <
                             })
                           }
                           const nextRevision = prevRevision + events.length
-                          const nextMap = new Map(map).set(entityId, { state: finalState, revision: nextRevision })
+                          const nextMap = evictIfNeeded(new Map(map).set(entityId, { state: finalState, revision: nextRevision }))
                           return [
                             [
                               adapter.toResult({
@@ -589,7 +646,8 @@ export const define = <
                     events,
                     state: finalState
                   }).pipe(
-                    Effect.tapError((e) => Effect.logError(`afterCommit failed: ${String(e)}`)),
+                    Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
+                    Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
                     Effect.ignore
                   )
                 }

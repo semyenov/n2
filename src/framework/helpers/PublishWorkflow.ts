@@ -49,6 +49,8 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
   readonly messageSchema: Workflow.AnyStructSchema & Schema.Schema<Message>
   readonly publisherTag: Context.Tag<PublisherI, PublisherService<Message>>
   readonly idOf?: (message: Message) => string
+  /** Maximum publish attempts before giving up. Default: unlimited. */
+  readonly maxAttempts?: number
 }) => {
   const idOf = config.idOf ?? ((m: Message) => m.id)
 
@@ -70,9 +72,20 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
     message: Message,
     executionId: string,
     attempt: number
-  ): Effect.Effect<void, never, never> =>
+  ): Effect.Effect<void, EventPublishError, never> =>
     publishActivity(message, attempt).pipe(
       Effect.catchTag("EventPublishError", (error) => {
+        if (config.maxAttempts !== undefined && attempt >= config.maxAttempts) {
+          return Effect.logError(`[${config.name}] permanently failed after ${attempt} attempts`).pipe(
+            Effect.annotateLogs({
+              messageId: idOf(message),
+              executionId,
+              attempt,
+              error: error.message
+            }),
+            Effect.zipRight(Effect.fail(error))
+          )
+        }
         const delaySeconds = computeRetryDelaySeconds(attempt)
         return Effect.logWarning(`[${config.name}] retry scheduled`).pipe(
           Effect.annotateLogs({
@@ -90,7 +103,7 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
           Effect.zipRight(retryPublish(message, executionId, attempt + 1))
         )
       })
-    ) as Effect.Effect<void, never, never>
+    ) as Effect.Effect<void, EventPublishError, never>
 
   const workflow = Workflow.make({
     name: config.name,
@@ -119,7 +132,8 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
               executionId
             })
           )
-        )
+        ),
+        Effect.catchTag("EventPublishError", () => Effect.void)
       )
   )
 

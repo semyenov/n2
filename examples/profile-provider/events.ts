@@ -2,7 +2,7 @@
  * Profile provider EventGroup — bridges domain events to the @effect/experimental EventLog system.
  *
  * Payload schemas are derived from the TaggedClass definitions in contracts.ts
- * via `fieldsOf()`, which strips the `_tag` discriminant and produces a plain
+ * via `eventPayloadSchema()`, which strips the `_tag` discriminant and produces a plain
  * Schema.Struct. This keeps contracts.ts as the single source of truth — any
  * field change there automatically flows to the EventGroup.
  *

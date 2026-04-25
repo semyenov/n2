@@ -100,10 +100,10 @@ interface ReplayEvent {
 }
 
 /** Create a generic replay tool for an event group. */
-export const makeReplayTool = <Event extends ReplayEvent>(config: {
+export const makeReplayTool = <Event extends ReplayEvent, DispatchE, DispatchR>(config: {
   readonly decodeEvent: (entry: EventJournalApi.Entry) => Effect.Effect<Event, Error>
   readonly entityIdOf: (event: Event) => string
-  readonly dispatch: (event: Event) => Effect.Effect<void, unknown, unknown>
+  readonly dispatch: (event: Event) => Effect.Effect<void, DispatchE, DispatchR>
   readonly eventGroup: EventGroup.EventGroup.Any
 }) => {
   const eventTags = new Set(

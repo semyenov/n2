@@ -85,6 +85,8 @@ export {
 
 export { makeEventDecoder } from "./EventDecoder.js"
 
+export { wireProjectionHandler } from "./Projection.js"
+
 export { makeTestAggregate } from "./TestAggregate.js"
 
 export {

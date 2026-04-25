@@ -1,6 +1,7 @@
 import * as Record from "effect/Record"
 import * as Schema from "effect/Schema"
 import { ClusterSchema, Entity } from "@effect/cluster"
+import { EventGroup } from "@effect/experimental"
 import type { Rpc } from "@effect/rpc"
 import { rpcFromCommand, type RpcFromCommandDefinition } from "./EntityBuilder.js"
 
@@ -186,9 +187,33 @@ export const eventPayloadSchema = <F extends Schema.Struct.Fields & { _tag: any 
 
 export const defineEvents = <const Members extends [TaggedSchema, ...Array<TaggedSchema>]>(
   ...members: Members
-): TaggedCollection<Members> => ({
+): TaggedCollection<Members> & {
+  /**
+   * Auto-derive an EventGroup from event definitions.
+   * Uses `eventPayloadSchema()` to strip `_tag` from each event class.
+   *
+   * @example
+   * ```ts
+   * const ProfileEvents = defineEvents(ProfileCreated, MergedDataProfile, ...)
+   * export const ProfileEventGroup = ProfileEvents.toEventGroup((p) => p.profileId)
+   * ```
+   */
+  readonly toEventGroup: <PK extends (payload: any) => string>(primaryKey: PK) => EventGroup.EventGroup<any>
+} => ({
   schema: defineSchemaUnion(...members),
-  constructors: constructorsByTag(members)
+  constructors: constructorsByTag(members),
+  toEventGroup: (primaryKey) => {
+    let group: EventGroup.EventGroup<any> = EventGroup.empty
+    for (const member of members) {
+      const payload = eventPayloadSchema(member as any)
+      group = group.add({
+        tag: member._tag,
+        primaryKey: primaryKey as any,
+        payload: payload as any
+      })
+    }
+    return group
+  }
 })
 
 export const defineErrors = <const Members extends [TaggedSchema, ...Array<TaggedSchema>]>(

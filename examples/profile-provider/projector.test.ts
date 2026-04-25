@@ -58,7 +58,8 @@ test("projector writes through the projection store and outbox without requiring
       Effect.sync(() => { outboxed.push({ messageId: message.id }) }),
     claimPending: () => Effect.succeed([] as const),
     markDispatched: () => Effect.void,
-    markFailed: () => Effect.void
+    markFailed: () => Effect.void,
+    markDeadLetter: () => Effect.void
   }
 
   const layer = Layer.mergeAll(
