@@ -6,9 +6,9 @@ A framework for building event-sourced microservices using **Effect-TS** and **B
 
 ```bash
 bun install
-bun test                                    # 64 tests
-bun src/examples/order/index.ts             # dev server on :3000
-bun examples/profile-provider/server.ts     # advanced example
+bun test
+bun examples/order/server.ts                # order dev server
+bun services/profiler/server.ts             # advanced production-style service
 ```
 
 ## Define an aggregate
@@ -54,7 +54,7 @@ const Order = N2.define<OrderEvent, OrderCommand>()({
 const OrderEntityLayer = Order.toEntityLayer(OrderEntity, {
   toResult: ({ entityId, revision }) => new CommandResult({ orderId: entityId, revision }),
   toError: (e) => e instanceof OrderError ? e : new OrderError({ message: String(e) }),
-  snapshots: { load, save, every: 100 },           // optional
+  snapshots: OrderSnapshotOps,                     // optional
   afterCommit: ({ events }) => publishToEventLog(),  // optional
   overrides: {                                       // read queries bypass dispatch
     GetOrder: (cmd, { getState }) => Effect.flatMap(getState, (s) => Effect.succeed(s))
@@ -74,15 +74,14 @@ const OrderHandlers = Order.toStatefulRpcHandlers(OrderRpcs, {
 - **[Getting Started](docs/getting-started.md)** — project setup, first aggregate
 - **[Framework API](docs/framework-api.md)** — complete reference for all helpers
 - **[Patterns](docs/patterns.md)** — projections, outbox, workflows, replay
-- **[Examples](docs/examples.md)** — order, inventory, profile-provider walkthrough
+- **[Examples](docs/examples.md)** — order and profiler walkthroughs
 
 ## Examples
 
 | Example | Complexity | Features |
 |---------|-----------|----------|
-| `src/examples/inventory/` | Simple | 2 commands, cluster entity |
-| `src/examples/order/` | Medium | 6 commands, sagas, projections, benchmarks |
-| `examples/profile-provider/` | Advanced | 7 events, snapshots, outbox, ClickHouse, replay |
+| `examples/order/` | Medium | commands, projections, snapshots, workflows |
+| `services/profiler/` | Advanced | snapshots, outbox, ClickHouse, replay |
 
 ## Effect-TS integration
 

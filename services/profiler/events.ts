@@ -14,7 +14,7 @@
  */
 import { EventGroup } from "@effect/experimental"
 import * as EventLogApi from "@effect/experimental/EventLog"
-import * as N2 from "../../src/framework/helpers/index.js"
+import * as N2 from "n2/helpers"
 import {
   ProfileCreated,
   MergedDataProfile,

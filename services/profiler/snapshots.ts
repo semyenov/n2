@@ -5,7 +5,7 @@
  * Schema codec serialization and SQL upsert logic.
  */
 import * as Context from "effect/Context"
-import { makeSnapshotService, type SnapshotService, type SnapshotEntry } from "../../src/framework/helpers/Snapshots.js"
+import { makeSnapshotOps, makeSnapshotService, type SnapshotService, type SnapshotEntry } from "n2/helpers"
 import { ProfileState } from "./contracts.js"
 
 export const SNAPSHOT_EVERY = 25
@@ -22,3 +22,8 @@ export const ProfileProviderSnapshotsLive = makeSnapshotService({
   stateSchema: ProfileState,
   idColumn: "profile_id"
 }).makeLive(ProfileProviderSnapshots)
+
+export const ProfileProviderSnapshotOps = makeSnapshotOps(
+  ProfileProviderSnapshots,
+  SNAPSHOT_EVERY
+)

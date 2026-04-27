@@ -5,7 +5,13 @@ Full documentation is in [docs/](docs/) — see [Getting Started](docs/getting-s
 
 ## What This Is
 
-N2 is a lightweight framework for building event-sourced microservices using **Effect-TS** and **Bun**. It provides:
+N2 is a lightweight framework for building event-sourced microservices using **Effect-TS** and **Bun**. This is a Bun workspace monorepo:
+
+- **`packages/n2`** — the framework package
+- **`services/profiler`** — profile provider service (event sourcing, snapshots, outbox, ClickHouse projections, replay)
+- **`examples/order`** — order example (sagas, projections, cluster)
+
+The framework provides:
 
 - **`define()`** — wires pure domain logic (evolve + decide) into stateful cluster entities, stateless RPC handlers, and HTTP routes, all without duplicating schemas or transport DTOs
 - **Lifecycle hooks** — snapshot persistence, post-handle transforms, event publishing, read query overrides
@@ -14,21 +20,26 @@ N2 is a lightweight framework for building event-sourced microservices using **E
 ## Commands
 
 ```sh
-bun install                  # install dependencies
-bunx tsc --noEmit            # type check (strict mode)
-bun test                     # run all tests
+bun install                  # install all workspace dependencies
+bunx tsc --noEmit            # type check entire monorepo (strict mode)
+
+# Run tests per workspace
+cd packages/n2 && bun test
+cd services/profiler && bun test
+cd examples/order && bun test
 
 # Run a single test file
-bun test src/examples/order/aggregate.test.ts
-bun test examples/profile-provider/aggregate.test.ts
+bun test packages/n2/src/framework/helpers/Definition.test.ts
+bun test services/profiler/aggregate.test.ts
+bun test examples/order/aggregate.test.ts
 
-# Run examples
-bun src/examples/order/index.ts                    # order dev server (port 3000)
-bun examples/profile-provider/server.ts            # profile-provider dev server
-bun examples/profile-provider/replay.ts --dry-run  # replay projections
+# Run services
+bun examples/order/server.ts                # order dev server (port 3000)
+bun services/profiler/server.ts             # profiler dev server
+bun services/profiler/replay.ts --dry-run   # replay projections
 ```
 
-After any meaningful change, run `bunx tsc --noEmit` then `bun test`.
+After any meaningful change, run `bunx tsc --noEmit` then tests in the affected workspace(s).
 
 ## Bun Runtime
 
@@ -79,29 +90,30 @@ Additional helpers:
 - `makeEventDecoder(eventGroup, constructors)` — generic journal event decoder
 - `makeReplayTool({ decodeEvent, entityIdOf, dispatch })` — journal replay with CLI option parsing
 
-### Framework Layout
+### Monorepo Layout
 
 ```
-src/framework/
-  domain/           Revision (optimistic concurrency), BrandedId
-  helpers/
-    Definition.ts     define() core + toEntityLayer + toStatefulRpcHandlers
-    Definitions.ts    defineCommands, defineEvents, eventPayloadSchema
-    EntityBuilder.ts  rpcFromCommand (derives RPC from TaggedRequest)
-    Snapshots.ts      makeSnapshotService (generic snapshot persistence)
-    Outbox.ts         makeOutboxService (transactional outbox + worker)
-    PublishWorkflow.ts makePublishWorkflow (durable publish with retry)
-    EventDecoder.ts   makeEventDecoder (journal entry → typed event)
-    Replay.ts         makeReplayTool, parseReplayOptions
-    Client.ts         makeHttpClient, makePromiseClient
-    FetchClient.ts    makeFetchClient (zero-dependency)
-  testing/          DeterministicIdGenerator, TestClock for pure domain tests
-src/adapters/http/  Bun HTTP server + RPC route wiring
-src/examples/
-  order/            Primary reference (6 commands, sagas, projections, bench)
-  inventory/        Secondary reference (simpler 2-command example)
-examples/
-  profile-provider/ Advanced reference (7 events, snapshots, outbox, ClickHouse projections, replay)
+packages/n2/                  Framework package (name: "n2")
+  index.ts                    Root entry point → src/main.js
+  src/framework/
+    domain/                   Revision (optimistic concurrency), BrandedId
+    helpers/
+      Definition.ts           define() core + toEntityLayer + toStatefulRpcHandlers
+      Definitions.ts          defineCommands, defineEvents, eventPayloadSchema
+      EntityBuilder.ts        rpcFromCommand (derives RPC from TaggedRequest)
+      Snapshots.ts            makeSnapshotService (generic snapshot persistence)
+      Outbox.ts               makeOutboxService (transactional outbox + worker)
+      PublishWorkflow.ts      makePublishWorkflow (durable publish with retry)
+      EventDecoder.ts         makeEventDecoder (journal entry → typed event)
+      Replay.ts               makeReplayTool, parseReplayOptions
+      Client.ts               makeHttpClient, makePromiseClient
+      FetchClient.ts          makeFetchClient (zero-dependency)
+    testing/                  DeterministicIdGenerator, TestClock for pure domain tests
+  src/adapters/http/          Bun HTTP server + RPC route wiring
+
+services/profiler/            Profile provider service (7 events, snapshots, outbox, ClickHouse projections, replay)
+
+examples/order/               Order example (6 commands, sagas, projections, cluster)
 ```
 
 ### Effect-TS Integration
@@ -122,11 +134,11 @@ examples/
 - `decide` stays pure or Effect-based with no infrastructure leakage
 - `evolve` is always a pure function (no effects)
 - Import Effect modules as namespaces: `import * as Effect from "effect/Effect"`
+- Services import framework via `import * as N2 from "n2/helpers"` (workspace package resolution)
 - Local TypeScript import specifiers end in `.js` (ESM module resolution)
 - Tests are colocated (`*.test.ts`) and use `import { test, expect } from "bun:test"`
 - For Effect-heavy tests, use `Effect.runPromise` consistent with the existing suite
-- When changing framework helpers (`src/framework/`), check order, inventory, and profile-provider examples for impact
-- If module boundaries change, update `src/main.ts` and `index.ts`
+- When changing framework helpers (`packages/n2/src/framework/`), check profiler and order examples for impact
 - Projection stores use per-event typed methods (not a single `project()` that switches on `_tag`)
 - Event metadata (occurredAt field mapping) is declared in contracts.ts alongside event definitions
 - Outbox is decoupled from projections — projector enqueues, store only handles read model mutations

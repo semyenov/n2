@@ -7,7 +7,7 @@ import * as Schedule from "effect/Schedule"
 import { ProfileProvider, initialProfileState } from "./aggregate.js"
 import { InfrastructureLayer } from "./layers.js"
 import { ProfileProviderEventGroup, ProfileProviderEventLogSchema } from "./events.js"
-import { ProfileProviderSnapshots, SNAPSHOT_EVERY } from "./snapshots.js"
+import { ProfileProviderSnapshotOps } from "./snapshots.js"
 import {
   type ProfileCommand,
   type ProfileEvent,
@@ -42,14 +42,6 @@ const toHistory = (state: ProfileState) =>
     snapshots: state.snapshots
   })
 
-const snapshotOps = {
-  load: (entityId: string) =>
-    Effect.flatMap(ProfileProviderSnapshots, (s) => s.load(entityId)),
-  save: (entityId: string, state: ProfileState, revision: number) =>
-    Effect.flatMap(ProfileProviderSnapshots, (s) => s.save(entityId, state, revision)),
-  every: SNAPSHOT_EVERY
-}
-
 const postHandle = ({ command, state }: { command: ProfileCommand; events: ReadonlyArray<ProfileEvent>; state: ProfileState; entityId: string }) => {
   if (command._tag === "CreateProfile" || command._tag === "MergeProfileData") {
     return { ...state, sourceAssets: mergeSourceAssets(state.sourceAssets, command.sources) }
@@ -64,7 +56,7 @@ export const ProfileProviderEntityLayer = ProfileProvider.toEntityLayer(
       new CommandResult({ profileId: entityId, branchId: state.activeBranchId, revision: state.revision }),
     toError: (error) =>
       error instanceof ProfileError ? error : new ProfileError({ message: String(error) }),
-    snapshots: snapshotOps,
+    snapshots: ProfileProviderSnapshotOps,
     postHandle,
     overrides: {
       GetProfile: (command, ctx) =>
@@ -104,7 +96,7 @@ export const ProfileProviderHandlersRaw = ProfileProvider.toStatefulRpcHandlers(
       new CommandResult({ profileId: entityId, branchId: state.activeBranchId, revision: state.revision }),
     toError: (error) =>
       error instanceof ProfileError ? error : new ProfileError({ message: String(error) }),
-    snapshots: snapshotOps,
+    snapshots: ProfileProviderSnapshotOps,
     postHandle,
     afterCommit: ({ events }) =>
       Effect.gen(function* () {

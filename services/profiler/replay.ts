@@ -5,8 +5,7 @@ import { BunRuntime } from "@effect/platform-bun"
 import * as EventJournalApi from "@effect/experimental/EventJournal"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { PgClient } from "@effect/sql-pg"
-import { makeEventDecoder } from "../../src/framework/helpers/EventDecoder.js"
-import { makeReplayTool, parseReplayOptions, type ReplayOptions } from "../../src/framework/helpers/Replay.js"
+import { makeEventDecoder, makeReplayProgram, makeReplayTool, parseReplayOptions, type ReplayOptions } from "n2/helpers"
 import { ProfileProviderClickhouseBootstrapLayer, resetProfileProviderClickhouseTables } from "./clickhouse-schema.js"
 import { ProfileProviderClickhouseLayer } from "./clickhouse.js"
 import {
@@ -66,39 +65,17 @@ const ReplayLayer = Layer.mergeAll(
 
 const program = Effect.gen(function* () {
   const resetFromEnv = yield* Config.boolean("RESET_CLICKHOUSE").pipe(Config.withDefault(true))
-  const options = yield* Effect.sync(() => parseReplayOptions(Bun.argv.slice(2), resetFromEnv))
-  const journal = yield* EventJournalApi.EventJournal
-
-  if (options.reset && !options.dryRun) {
-    yield* Effect.log("Resetting ClickHouse profile-provider projection tables")
-    yield* resetProfileProviderClickhouseTables
-  }
-
-  const entries = yield* journal.entries
-  const profileEvents = yield* replay.collectEvents(entries, options)
-
-  yield* Effect.log("Starting profile-provider projection replay").pipe(
-    Effect.annotateLogs({
-      profileId: options.entityId ?? "all",
-      minRevision: options.minRevision ?? "none",
-      maxRevision: options.maxRevision ?? "none",
-      reset: options.reset,
-      dryRun: options.dryRun
-    })
-  )
-
-  yield* Effect.log(`Replaying ${profileEvents.length} profile-provider events into ClickHouse`)
-
-  if (options.dryRun) {
-    yield* Effect.log("Dry run enabled, skipping ClickHouse mutation")
-    return
-  }
-
-  for (const event of profileEvents) {
-    yield* replay.dispatch(event)
-  }
-
-  yield* Effect.log("Profile-provider projection replay completed")
+  yield* makeReplayProgram({
+    argv: Bun.argv.slice(2),
+    resetDefault: resetFromEnv,
+    label: "profile-provider projection",
+    entries: Effect.flatMap(EventJournalApi.EventJournal, (journal) => journal.entries),
+    decodeEvent,
+    entityIdOf: (event) => event.profileId,
+    dispatch: dispatchToStore,
+    eventGroup: ProfileProviderEventGroup,
+    reset: resetProfileProviderClickhouseTables
+  })
 })
 
 const main = program.pipe(Effect.provide(ReplayLayer))

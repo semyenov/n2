@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import * as N2 from "n2/framework/helpers/index.js"
+ * import * as N2 from "n2/helpers"
  *
  * const OrderCommands = N2.defineCommands(
  *   (p) => p.orderId,
@@ -67,14 +67,17 @@ export { makeFetchClient } from "./FetchClient.js"
 
 export {
   makeSnapshotService,
+  makeSnapshotOps,
   type SnapshotEntry,
   type SnapshotService
 } from "./Snapshots.js"
 
 export {
   makeOutboxService,
+  makeOutboxJsonService,
   computeRetryDelaySeconds,
   type OutboxEntry,
+  type OutboxJsonConfig,
   type OutboxService
 } from "./Outbox.js"
 
@@ -91,6 +94,10 @@ export { makeTestAggregate } from "./TestAggregate.js"
 
 export {
   makeReplayTool,
+  makeReplayProgram,
   parseReplayOptions,
-  type ReplayOptions
+  type ReplayEvent,
+  type ReplayOptions,
+  type ReplayProgramConfig,
+  type ReplayProgramSummary
 } from "./Replay.js"

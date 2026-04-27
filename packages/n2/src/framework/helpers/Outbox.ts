@@ -40,6 +40,7 @@ import type * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Metric from "effect/Metric"
+import * as Schema from "effect/Schema"
 import type { DurationInput } from "effect/Duration"
 import { SqlClient, type SqlClient as SqlClientInstance } from "@effect/sql/SqlClient"
 import type { SqlError } from "@effect/sql/SqlError"
@@ -73,6 +74,14 @@ interface OutboxConfig<Message> {
   readonly idOf: (message: Message) => string
   readonly serialize: (message: Message) => string
   readonly deserialize: (json: string) => Message
+  /** Optional metrics prefix. When set, emits counters for dispatch, errors, and dead letters. */
+  readonly metrics?: { readonly prefix: string }
+}
+
+export interface OutboxJsonConfig<Message, Encoded> {
+  readonly table: string
+  readonly schema: Schema.Schema<Message, Encoded>
+  readonly idOf: (message: Message) => string
   /** Optional metrics prefix. When set, emits counters for dispatch, errors, and dead letters. */
   readonly metrics?: { readonly prefix: string }
 }
@@ -303,4 +312,26 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => {
     ) as Layer.Layer<never, never, I | PublishR>
   }
 })
+}
+
+/**
+ * Creates an outbox service factory for Schema-backed JSON messages.
+ *
+ * This keeps production services from repeating the same
+ * `Schema.encodeSync` / `Schema.decodeUnknownSync` boilerplate while still
+ * delegating storage, claiming, retry, and worker behavior to `makeOutboxService`.
+ */
+export const makeOutboxJsonService = <Message, Encoded>(
+  config: OutboxJsonConfig<Message, Encoded>
+) => {
+  const encode = Schema.encodeSync(config.schema)
+  const decode = Schema.decodeUnknownSync(config.schema)
+
+  return makeOutboxService({
+    table: config.table,
+    idOf: config.idOf,
+    serialize: (message) => JSON.stringify(encode(message)),
+    deserialize: (json) => decode(JSON.parse(json)),
+    metrics: config.metrics
+  })
 }

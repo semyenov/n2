@@ -2,8 +2,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import { computeRetryDelaySeconds } from "../../src/framework/helpers/Outbox.js"
-import { makePublishWorkflow } from "../../src/framework/helpers/PublishWorkflow.js"
+import { computeRetryDelaySeconds, makePublishWorkflow } from "n2/helpers"
 
 const Headers = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 const TOPIC = "profile-provider.events"

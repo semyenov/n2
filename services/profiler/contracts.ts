@@ -9,7 +9,7 @@
  * instead of an opaque JSON string.
  */
 import * as Schema from "effect/Schema"
-import * as N2 from "../../src/framework/helpers/index.js"
+import * as N2 from "n2/helpers"
 
 const NonNegativeNumber = Schema.Number.pipe(Schema.greaterThanOrEqualTo(0))
 const PositiveInt = Schema.Number.pipe(Schema.int(), Schema.greaterThanOrEqualTo(1))

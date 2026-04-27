@@ -36,6 +36,24 @@ export interface SnapshotService<State> {
 }
 
 /**
+ * Build the snapshot hook object consumed by `Definition.toEntityLayer()`.
+ *
+ * Production services usually only need to pass a snapshot Context.Tag and a
+ * cadence. This helper keeps entity wiring focused on business adapters while
+ * preserving access to the lower-level `SnapshotService` when needed.
+ */
+export const makeSnapshotOps = <I, State>(
+  tag: Context.Tag<I, SnapshotService<State>>,
+  every: number
+) => ({
+  load: (entityId: string) =>
+    Effect.flatMap(tag, (snapshots) => snapshots.load(entityId)),
+  save: (entityId: string, state: State, revision: number) =>
+    Effect.flatMap(tag, (snapshots) => snapshots.save(entityId, state, revision)),
+  every
+})
+
+/**
  * Creates a snapshot service factory for a given state schema and table name.
  * Call `.makeLive(tag)` to produce a Layer for the given Context.Tag.
  */

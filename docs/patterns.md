@@ -65,11 +65,11 @@ Outbox is **decoupled** from the projection store — the store only handles rea
 ## Transactional outbox
 
 ```ts
-const outbox = makeOutboxService({
+const outbox = makeOutboxJsonService({
   table: "my_event_outbox",
+  schema: MyEventMessage,
   idOf: (m) => m.id,
-  serialize: (m) => JSON.stringify(encode(m)),
-  deserialize: (json) => decode(JSON.parse(json))
+  metrics: { prefix: "my_event_outbox" }
 })
 
 // Service layer
@@ -80,7 +80,8 @@ const MyOutboxWorkerLive = outbox.makeWorkerLive({
   outbox: MyOutbox,
   publish: (message) => startMyEventPublish(message),
   batchSize: 50,
-  idleDelay: "1 second"
+  idleDelay: "1 second",
+  maxRetries: 5
 })
 ```
 
@@ -115,14 +116,11 @@ const snapshots = makeSnapshotService({
   stateSchema: MyState,
   idColumn: "entity_id"
 })
+const MySnapshotOps = makeSnapshotOps(MySnapshots, 100)
 
 // Wire into entity layer:
 Order.toEntityLayer(OrderEntity, {
-  snapshots: {
-    load: (id) => Effect.flatMap(MySnapshots, (s) => s.load(id)),
-    save: (id, state, rev) => Effect.flatMap(MySnapshots, (s) => s.save(id, state, rev)),
-    every: 100
-  }
+  snapshots: MySnapshotOps
 })
 ```
 
@@ -133,17 +131,18 @@ Rebuild projections from the event journal:
 ```ts
 const decodeEvent = makeEventDecoder(MyEventGroup, { MyEvent, OtherEvent })
 
-const replay = makeReplayTool({
+// CLI: bun my-replay.ts --entity-id abc --min-revision 10 --dry-run
+yield* makeReplayProgram({
+  argv: Bun.argv.slice(2),
+  resetDefault: true,
+  label: "my projection",
+  entries: Effect.flatMap(EventJournal, (journal) => journal.entries),
   decodeEvent,
   entityIdOf: (event) => event.entityId,
   dispatch: (event) => Effect.flatMap(MyStore, (s) => s.dispatch(event)),
-  eventGroup: MyEventGroup
+  eventGroup: MyEventGroup,
+  reset: resetMyProjectionTables
 })
-
-// CLI: bun my-replay.ts --entity-id abc --min-revision 10 --dry-run
-const options = parseReplayOptions(Bun.argv.slice(2), true)
-const events = yield* replay.collectEvents(entries, options)
-for (const event of events) yield* replay.dispatch(event)
 ```
 
 ## Sagas / workflows

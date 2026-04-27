@@ -1,19 +1,15 @@
 import * as Context from "effect/Context"
-import * as Schema from "effect/Schema"
-import { makeOutboxService, type OutboxService } from "../../src/framework/helpers/Outbox.js"
+import { makeOutboxJsonService, type OutboxService } from "n2/helpers"
 import {
   ProfileProviderEventMessage,
   startProfileEventPublish
 } from "./workflows.js"
 
-const encodeMessage = Schema.encodeSync(ProfileProviderEventMessage)
-const decodeMessage = Schema.decodeUnknownSync(ProfileProviderEventMessage)
-
-const outbox = makeOutboxService({
+const outbox = makeOutboxJsonService({
   table: "profile_provider_event_outbox",
+  schema: ProfileProviderEventMessage,
   idOf: (m: ProfileProviderEventMessage) => m.id,
-  serialize: (m) => JSON.stringify(encodeMessage(m)),
-  deserialize: (json) => decodeMessage(JSON.parse(json))
+  metrics: { prefix: "profile_provider.outbox" }
 })
 
 export type OutboxEntry = {
@@ -32,12 +28,14 @@ export const ProfileProviderOutboxPgLive = outbox.makeLive(ProfileProviderOutbox
 export const drainProfileProviderOutboxOnce = outbox.makeDrainOnce({
   outbox: ProfileProviderOutbox,
   publish: (message) => startProfileEventPublish(message),
-  batchSize: 50
+  batchSize: 50,
+  maxRetries: 5
 })
 
 export const ProfileProviderOutboxWorkerLive = outbox.makeWorkerLive({
   outbox: ProfileProviderOutbox,
   publish: (message) => startProfileEventPublish(message),
   batchSize: 50,
-  idleDelay: "1 second"
+  idleDelay: "1 second",
+  maxRetries: 5
 })

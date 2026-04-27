@@ -94,6 +94,10 @@ EventGroup.empty.add({
 
 ## Infrastructure helpers
 
+Preferred package imports are `n2/helpers`, `n2/domain`, `n2/testing`, and
+`n2/adapters/http`. Legacy documented paths such as `n2/src/main` and
+`n2/framework/helpers` remain exported for compatibility.
+
 ### `makeSnapshotService({ table, stateSchema, idColumn? })`
 
 Generic SQL snapshot persistence. Returns `.makeLive(tag)` → `Layer`.
@@ -102,6 +106,22 @@ Generic SQL snapshot persistence. Returns `.makeLive(tag)` → `Layer`.
 const snapshots = makeSnapshotService({ table: "my_snapshots", stateSchema: MyState })
 class MySnapshots extends Context.Tag("MySnapshots")<MySnapshots, SnapshotService<MyState>>() {}
 const MySnapshotsLive = snapshots.makeLive(MySnapshots)
+```
+
+The SQL table must contain the entity ID column (`entity_id` by default),
+`state_json`, `revision`, and `saved_at`.
+
+### `makeSnapshotOps(tag, every)`
+
+Builds the `snapshots` hook object for `toEntityLayer` / `toStatefulRpcHandlers`.
+
+```ts
+export const MySnapshotOps = makeSnapshotOps(MySnapshots, 100)
+
+MyAggregate.toEntityLayer(MyEntity, {
+  snapshots: MySnapshotOps,
+  // ...
+})
 ```
 
 ### `makeOutboxService({ table, idOf, serialize, deserialize })`
@@ -114,6 +134,31 @@ const outbox = makeOutboxService({
   idOf: (m) => m.id,
   serialize: (m) => JSON.stringify(Schema.encodeSync(MyMessage)(m)),
   deserialize: (json) => Schema.decodeUnknownSync(MyMessage)(JSON.parse(json))
+})
+```
+
+The outbox table must contain `id`, `payload_json`, `status`, `retry_count`,
+`last_error`, `created_at`, `updated_at`, `published_at`, and `next_attempt_at`.
+
+### `makeOutboxJsonService({ table, schema, idOf, metrics? })`
+
+Schema-backed JSON variant of `makeOutboxService`; use this for the common
+production case where messages are Effect Schema classes.
+
+```ts
+const outbox = makeOutboxJsonService({
+  table: "my_outbox",
+  schema: MyMessage,
+  idOf: (m) => m.id,
+  metrics: { prefix: "my_outbox" }
+})
+
+const MyOutboxWorkerLive = outbox.makeWorkerLive({
+  outbox: MyOutbox,
+  publish: publishWorkflow.start,
+  batchSize: 50,
+  idleDelay: "1 second",
+  maxRetries: 5
 })
 ```
 
@@ -139,9 +184,15 @@ Builds a decoder function from EventGroup + event constructors for replaying jou
 
 Generic replay tool. Returns `.collectEvents(entries, options)`, `.dispatch(event)`, `.matchesOptions(event, options)`.
 
+### `makeReplayProgram({ argv, resetDefault, label, entries, decodeEvent, entityIdOf, dispatch, eventGroup, reset? })`
+
+Builds a production replay CLI program: parses options, logs filters, optionally
+resets read models, honors `--dry-run`, and dispatches matching events in order.
+
 ### `parseReplayOptions(argv, resetDefault)`
 
-CLI argument parser for `--entity-id`, `--min-revision`, `--max-revision`, `--reset`, `--dry-run`.
+CLI argument parser for `--entity-id`, `--min-revision`, `--max-revision`,
+`--reset`, `--no-reset`, and `--dry-run`.
 
 ---
 

@@ -32,6 +32,12 @@ export interface ReplayOptions {
   readonly dryRun: boolean
 }
 
+export interface ReplayProgramSummary {
+  readonly options: ReplayOptions
+  readonly collected: number
+  readonly dispatched: number
+}
+
 const parseRevision = (name: string, value: string) => {
   const parsed = Number.parseInt(value, 10)
   if (!Number.isInteger(parsed) || parsed < 0) {
@@ -94,9 +100,29 @@ export const parseReplayOptions = (argv: ReadonlyArray<string>, resetFromEnv: bo
   return { entityId, minRevision, maxRevision, reset, dryRun }
 }
 
-interface ReplayEvent {
+export interface ReplayEvent {
   readonly _tag: string
   readonly revision: number
+}
+
+export interface ReplayProgramConfig<
+  Event extends ReplayEvent,
+  EntriesE = never,
+  EntriesR = never,
+  DispatchE = never,
+  DispatchR = never,
+  ResetE = never,
+  ResetR = never
+> {
+  readonly argv: ReadonlyArray<string>
+  readonly resetDefault: boolean
+  readonly label: string
+  readonly entries: Effect.Effect<ReadonlyArray<EventJournalApi.Entry>, EntriesE, EntriesR>
+  readonly decodeEvent: (entry: EventJournalApi.Entry) => Effect.Effect<Event, Error>
+  readonly entityIdOf: (event: Event) => string
+  readonly dispatch: (event: Event) => Effect.Effect<void, DispatchE, DispatchR>
+  readonly eventGroup: EventGroup.EventGroup.Any
+  readonly reset?: Effect.Effect<void, ResetE, ResetR>
 }
 
 /** Create a generic replay tool for an event group. */
@@ -138,4 +164,69 @@ export const makeReplayTool = <Event extends ReplayEvent, DispatchE, DispatchR>(
     collectEvents,
     dispatch: config.dispatch
   }
+}
+
+/**
+ * Build a replay CLI program from the standard replay pieces.
+ *
+ * The program parses CLI options, optionally runs a reset effect, collects and
+ * filters journal entries, logs the run shape, honors dry-run mode, and
+ * dispatches matching events sequentially.
+ */
+export const makeReplayProgram = <
+  Event extends ReplayEvent,
+  EntriesE = never,
+  EntriesR = never,
+  DispatchE = never,
+  DispatchR = never,
+  ResetE = never,
+  ResetR = never
+>(
+  config: ReplayProgramConfig<Event, EntriesE, EntriesR, DispatchE, DispatchR, ResetE, ResetR>
+): Effect.Effect<ReplayProgramSummary, Error | EntriesE | DispatchE | ResetE, EntriesR | DispatchR | ResetR> => {
+  const replay = makeReplayTool({
+    decodeEvent: config.decodeEvent,
+    entityIdOf: config.entityIdOf,
+    dispatch: config.dispatch,
+    eventGroup: config.eventGroup
+  })
+
+  return Effect.gen(function* () {
+    const options = yield* Effect.try({
+      try: () => parseReplayOptions(config.argv, config.resetDefault),
+      catch: (error) => error instanceof Error ? error : new Error(String(error))
+    })
+
+    if (options.reset && !options.dryRun && config.reset) {
+      yield* Effect.log(`Resetting ${config.label}`)
+      yield* config.reset
+    }
+
+    const entries = yield* config.entries
+    const events = yield* replay.collectEvents(entries, options)
+
+    yield* Effect.log(`Starting ${config.label} replay`).pipe(
+      Effect.annotateLogs({
+        entityId: options.entityId ?? "all",
+        minRevision: options.minRevision ?? "none",
+        maxRevision: options.maxRevision ?? "none",
+        reset: options.reset,
+        dryRun: options.dryRun
+      })
+    )
+    yield* Effect.log(`Replaying ${events.length} ${config.label} events`)
+
+    if (options.dryRun) {
+      yield* Effect.log("Dry run enabled, skipping replay mutation")
+      return { options, collected: events.length, dispatched: 0 }
+    }
+
+    for (const event of events) {
+      yield* replay.dispatch(event)
+    }
+
+    yield* Effect.log(`${config.label} replay completed`)
+
+    return { options, collected: events.length, dispatched: events.length }
+  })
 }

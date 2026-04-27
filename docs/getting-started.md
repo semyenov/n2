@@ -23,7 +23,7 @@ Define events, commands, errors, and state using Effect Schema. Commands are `Sc
 
 ```ts
 import * as Schema from "effect/Schema"
-import * as N2 from "n2/framework/helpers"
+import * as N2 from "n2/helpers"
 
 // Common event fields
 const EventBase = { itemId: Schema.String, occurredAt: Schema.DateTimeUtc }
@@ -55,7 +55,7 @@ const ItemRpcs = ItemEntity.protocol
 Use `N2.define()` for exhaustive compile-time checking. TypeScript ensures every event has an `evolve` handler and every command has a `decide` handler.
 
 ```ts
-import * as N2 from "n2/framework/helpers"
+import * as N2 from "n2/helpers"
 
 const Item = N2.define<ItemEvent, ItemCommand>()({
   initialState,
@@ -90,7 +90,7 @@ const ItemEntityLayer = Item.toEntityLayer(ItemEntity, {
 
 ```ts
 import { EventGroup } from "@effect/experimental"
-import * as N2 from "n2/framework/helpers"
+import * as N2 from "n2/helpers"
 
 const ItemEventGroup = EventGroup.empty
   .add({ tag: "ItemCreated", primaryKey: (p) => p.itemId, payload: N2.eventPayloadSchema(ItemCreated) })
