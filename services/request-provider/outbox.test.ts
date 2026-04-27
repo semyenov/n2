@@ -2,13 +2,14 @@ import { test, expect } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import { WorkflowEngine } from "@effect/workflow"
+import type { OutboxEntry } from "@semyenov/n2/helpers"
 import {
   drainRequestProviderOutboxOnce,
-  RequestProviderOutbox,
-  type OutboxEntry
+  RequestProviderOutbox
 } from "./outbox.js"
 import {
   makeRequestProviderEventMessage,
+  RequestProviderEventMessage,
   RequestProviderEventPublishHandlers,
   RequestProviderEventPublisher
 } from "./workflows.js"
@@ -16,7 +17,7 @@ import {
 const makeRequestId = (seed: number) =>
   `00000000-0000-4000-8000-${seed.toString().padStart(12, "0")}`
 
-const makeEntry = (seed: number): OutboxEntry => {
+const makeEntry = (seed: number): OutboxEntry<RequestProviderEventMessage> => {
   const message = makeRequestProviderEventMessage({
     requestId: makeRequestId(seed),
     revision: seed,

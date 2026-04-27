@@ -9,6 +9,7 @@
   "exports": {
     ".": "./index.ts",
     "./helpers": "./src/framework/helpers/index.ts",
+    "./runtime": "./src/framework/helpers/Runtime.ts",
     "./domain": "./src/framework/domain/index.ts",
     "./testing": "./src/framework/testing/index.ts",
     "./adapters/http": "./src/adapters/http/index.ts",
@@ -54,6 +55,10 @@
     "@effect/rpc": "^0.75.0",
     "@effect/sql": "^0.51.0",
     "@effect/workflow": "^0.18.0"
+  },
+  "peerDependencies": {
+    "@effect/sql-clickhouse": "^0.48.0",
+    "@effect/sql-pg": "^0.52.1"
   },
   "devDependencies": {
     "@effect/vitest": "^0.29.0",

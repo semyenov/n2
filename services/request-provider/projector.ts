@@ -1,5 +1,5 @@
-import * as Effect from "effect/Effect"
 import { EventLog } from "@effect/experimental"
+import { wireProjectionHandler } from "@semyenov/n2/helpers"
 import {
   type RequestProviderEvent,
   RequestCreated,
@@ -25,40 +25,8 @@ export const RequestProviderProjectionLayer = EventLog.group(
   RequestProviderEventGroup,
   (handlers) =>
     handlers
-      .handle("RequestCreated", ({ payload }) =>
-        Effect.gen(function* () {
-          const store = yield* RequestProviderProjectionStore
-          const outbox = yield* RequestProviderOutbox
-          const event = new RequestCreated(payload)
-          yield* store.onRequestCreated(event)
-          yield* outbox.enqueue(makeMessage(event))
-        }).pipe(Effect.orDie)
-      )
-      .handle("RequestUpdated", ({ payload }) =>
-        Effect.gen(function* () {
-          const store = yield* RequestProviderProjectionStore
-          const outbox = yield* RequestProviderOutbox
-          const event = new RequestUpdated(payload)
-          yield* store.onRequestUpdated(event)
-          yield* outbox.enqueue(makeMessage(event))
-        }).pipe(Effect.orDie)
-      )
-      .handle("RequestMetaDataCreated", ({ payload }) =>
-        Effect.gen(function* () {
-          const store = yield* RequestProviderProjectionStore
-          const outbox = yield* RequestProviderOutbox
-          const event = new RequestMetaDataCreated(payload)
-          yield* store.onRequestMetaDataCreated(event)
-          yield* outbox.enqueue(makeMessage(event))
-        }).pipe(Effect.orDie)
-      )
-      .handle("RequestSnapshotCreated", ({ payload }) =>
-        Effect.gen(function* () {
-          const store = yield* RequestProviderProjectionStore
-          const outbox = yield* RequestProviderOutbox
-          const event = new RequestSnapshotCreated(payload)
-          yield* store.onRequestSnapshotCreated(event)
-          yield* outbox.enqueue(makeMessage(event))
-        }).pipe(Effect.orDie)
-      )
+      .handle("RequestCreated", wireProjectionHandler(RequestProviderProjectionStore, RequestProviderOutbox, RequestCreated, "onRequestCreated", makeMessage))
+      .handle("RequestUpdated", wireProjectionHandler(RequestProviderProjectionStore, RequestProviderOutbox, RequestUpdated, "onRequestUpdated", makeMessage))
+      .handle("RequestMetaDataCreated", wireProjectionHandler(RequestProviderProjectionStore, RequestProviderOutbox, RequestMetaDataCreated, "onRequestMetaDataCreated", makeMessage))
+      .handle("RequestSnapshotCreated", wireProjectionHandler(RequestProviderProjectionStore, RequestProviderOutbox, RequestSnapshotCreated, "onRequestSnapshotCreated", makeMessage))
 )

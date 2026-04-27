@@ -163,6 +163,16 @@ const MyOutboxWorkerLive = outbox.makeWorkerLive({
 })
 ```
 
+### `makeStandardSnapshotWiring({ tag, table, stateSchema, idColumn?, every })`
+
+Combines `makeSnapshotService(...).makeLive(tag)` and `makeSnapshotOps(tag, every)`
+for services that use the standard SQL snapshot table shape.
+
+### `makeStandardOutboxWiring({ tag, table, schema, publish, metricsPrefix? })`
+
+Combines JSON outbox storage, one-shot drain, and worker layer with the standard
+service defaults: batch size `50`, idle delay `1 second`, and max retries `5`.
+
 ### `makePublishWorkflow({ name, messageSchema, publisherTag })`
 
 Durable publish with exponential backoff retry via `@effect/workflow`. Returns `.workflow`, `.start(message)`, `.handlers` (Layer).
@@ -176,6 +186,19 @@ const pw = makePublishWorkflow({
 export const startPublish = pw.start
 export const publishHandlers = pw.handlers
 ```
+
+### `makeEventMessageFields(entityIdKey)` / `makeEventMessage(options)`
+
+Builds the standard publication envelope fields used by durable event workflows:
+`id`, `topic`, `partitionKey`, `eventType`, entity ID, `revision`, `occurredAt`,
+`payload`, and `headers`.
+
+### Runtime wiring helpers
+
+`makeConfiguredClickhouseLayer`, `makeMigrationsLayer`, `makePgSqlLayer`,
+`makeClusterShardingLayer`, `makeHealthRoute`, `makeRpcHttpRoute`, and
+`makeServiceInfrastructureLayers` cover the repeated service entrypoint and
+infrastructure composition used by provider-style services.
 
 ### `makeEventDecoder(eventGroup, constructors)`
 

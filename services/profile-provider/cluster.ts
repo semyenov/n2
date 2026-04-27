@@ -1,10 +1,14 @@
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import { BunClusterHttp, BunHttpServer, BunRuntime } from "@effect/platform-bun"
-import { HttpLayerRouter, HttpServerResponse } from "@effect/platform"
-import { RpcSerialization, RpcServer } from "@effect/rpc"
-import { PgClient } from "@effect/sql-pg"
+import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
+import { HttpLayerRouter } from "@effect/platform"
+import {
+  makeClusterShardingLayer,
+  makeHealthRoute,
+  makePgSqlLayer,
+  makeRpcHttpRoute
+} from "@semyenov/n2/runtime"
 import { ProfileProviderEntityLayer, ProfileProviderProxyHandlers, ProfileProviderProxyRpcs } from "./entity.js"
 import { ClusterInfrastructureLayer } from "./layers.js"
 import { MigrationsLayer } from "./migrate.js"
@@ -46,35 +50,17 @@ import { MigrationsLayer } from "./migrate.js"
  * Health endpoint:   /health
  */
 
-const ProfileProviderRpcRoute = RpcServer
-  .layerHttpRouter({
-    group: ProfileProviderProxyRpcs,
-    path: "/rpc/profile-provider",
-    protocol: "http"
-  }).pipe(
-    Layer.provide(ProfileProviderProxyHandlers),
-    Layer.provide(RpcSerialization.layerJsonRpc())
-  )
+const ProfileProviderRpcRoute = makeRpcHttpRoute({
+  group: ProfileProviderProxyRpcs,
+  path: "/rpc/profile-provider",
+  handlers: ProfileProviderProxyHandlers
+})
 
-const HealthRoute = HttpLayerRouter.add(
-  "GET",
-  "/health",
-  HttpServerResponse.json({ status: "ok" })
-)
+const HealthRoute = makeHealthRoute()
 
-const SqlLayer = PgClient.layerConfig(
-  Config.map(Config.redacted("DATABASE_URL"), (url) => ({
-    url,
-    minConnections: 4
-  }))
-)
+const SqlLayer = makePgSqlLayer({ minConnections: 4 })
 
-const ShardingLayer = BunClusterHttp.layer({
-  transport: "http",
-  storage: "sql"
-}).pipe(
-  Layer.provide(SqlLayer),
-)
+const ShardingLayer = makeClusterShardingLayer(SqlLayer)
 
 const EntitiesLayer = Layer.provide(
   ProfileProviderEntityLayer,

@@ -13,30 +13,22 @@ import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import { BunHttpServer, BunRuntime } from "@effect/platform-bun"
-import { HttpLayerRouter, HttpServerResponse } from "@effect/platform"
-import { RpcSerialization, RpcServer } from "@effect/rpc"
-import { PgClient } from "@effect/sql-pg"
+import { HttpLayerRouter } from "@effect/platform"
+import { makeHealthRoute, makePgSqlLayer, makeRpcHttpRoute } from "@semyenov/n2/runtime"
 import { RequestProviderHandlers } from "./entity.js"
 import { RequestProviderRpcs } from "./contracts.js"
 import { InfrastructureLayer } from "./layers.js"
 import { MigrationsLayer } from "./migrate.js"
 
-const SqlLayer = PgClient.layerConfig(
-  Config.map(Config.redacted("DATABASE_URL"), (url) => ({ url }))
-)
+const SqlLayer = makePgSqlLayer()
 
-const RequestProviderRpcRoute = RpcServer
-  .layerHttpRouter({ group: RequestProviderRpcs, path: "/rpc/request-provider", protocol: "http" })
-  .pipe(
-    Layer.provide(RequestProviderHandlers),
-    Layer.provide(RpcSerialization.layerJsonRpc())
-  )
+const RequestProviderRpcRoute = makeRpcHttpRoute({
+  group: RequestProviderRpcs,
+  path: "/rpc/request-provider",
+  handlers: RequestProviderHandlers
+})
 
-const HealthRoute = HttpLayerRouter.add(
-  "GET",
-  "/health",
-  HttpServerResponse.json({ status: "ok" })
-)
+const HealthRoute = makeHealthRoute()
 
 const ServerLayer = HttpLayerRouter.serve(
   Layer.mergeAll(RequestProviderRpcRoute, HealthRoute)

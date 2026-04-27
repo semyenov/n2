@@ -35,7 +35,8 @@ import {
   SnapshotPublishedProfile,
   ProfileBranch,
   ProfileRevisionEntry,
-  ProfileSnapshot
+  ProfileSnapshot,
+  CommandResult
 } from "./contracts.js"
 
 export { initialProfileState }
@@ -77,9 +78,9 @@ const ensureProfileIdMatches = (
 ) =>
   candidateProfileId === profileId
     ? Effect.void
-    : new ProfileError({
+    : Effect.fail(new ProfileError({
       message: `${fieldName}.uuid must match profileId "${profileId}"`
-    })
+    }))
 
 const nextRevision = (state: ProfileState, offset: number) => state.revision + offset + 1
 
@@ -539,3 +540,6 @@ export const ProfileProvider = N2.define<ProfileEvent, ProfileCommand>()({
 })
 
 export const { evolve, decide, handle, initialState: _initialState } = ProfileProvider
+
+export const toCommandResult = (entityId: string, state: ProfileState) =>
+  new CommandResult({ profileId: entityId, branchId: state.activeBranchId, revision: state.revision })

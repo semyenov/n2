@@ -2,18 +2,19 @@ import { test, expect } from "bun:test"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import { WorkflowEngine } from "@effect/workflow"
+import type { OutboxEntry } from "@semyenov/n2/helpers"
 import {
   drainProfileProviderOutboxOnce,
-  ProfileProviderOutbox,
-  type OutboxEntry
+  ProfileProviderOutbox
 } from "./outbox.js"
 import {
   makeProfileProviderEventMessage,
+  ProfileProviderEventMessage,
   ProfileProviderEventPublishHandlers,
   ProfileProviderEventPublisher
 } from "./workflows.js"
 
-const makeEntry = (seed: number): OutboxEntry => {
+const makeEntry = (seed: number): OutboxEntry<ProfileProviderEventMessage> => {
   const message = makeProfileProviderEventMessage({
     profileId: `00000000-0000-4000-8000-${seed.toString().padStart(12, "0")}`,
     revision: seed,

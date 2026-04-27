@@ -37,6 +37,8 @@
         "@effect/platform-bun": "^0.89.0",
         "@effect/rpc": "^0.75.0",
         "@effect/sql": "^0.51.0",
+        "@effect/sql-clickhouse": "^0.48.0",
+        "@effect/sql-pg": "^0.52.1",
         "@effect/workflow": "^0.18.0",
         "effect": "^3.21.0",
       },
@@ -45,7 +47,7 @@
         "vitest": "^3.2.0",
       },
     },
-    "services/profiler": {
+    "services/profile-provider": {
       "name": "@n2/profiler",
       "dependencies": {
         "@effect/cluster": "^0.58.0",
@@ -183,7 +185,7 @@
 
     "@n2/example-order": ["@n2/example-order@workspace:examples/order"],
 
-    "@n2/profiler": ["@n2/profiler@workspace:services/profiler"],
+    "@n2/profiler": ["@n2/profiler@workspace:services/profile-provider"],
 
     "@n2/request-provider": ["@n2/request-provider@workspace:services/request-provider"],
 

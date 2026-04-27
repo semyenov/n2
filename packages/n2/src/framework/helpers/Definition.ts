@@ -91,9 +91,12 @@ type AdapterR<A> =
   | (A extends { readonly afterCommit: infer AC } ? ExtractEffectR<AC> : never)
   | (A extends { readonly overrides: { readonly [k: string]: infer O } } ? ExtractEffectR<O> : never)
 
-type OverrideContext<State, HooksR> = {
+type OverrideContext<State, _HooksR> = {
   readonly entityId: string
-  readonly getState: (entityId: string) => Effect.Effect<State, unknown, HooksR>
+  // getState reads in-memory state and swallows snapshot errors via Effect.orElse,
+  // so it never fails. Requirements are widened to unknown so both stateful and
+  // entity-layer implementations satisfy this contract.
+  readonly getState: (entityId: string) => Effect.Effect<State, never, unknown>
 }
 
 type OverrideHandlers<State, Command extends Tagged, HooksR> = {
@@ -115,16 +118,10 @@ const instantiateCommand = <CurrentCommand extends Tagged>(
   Reflect.construct(Command, [payload]) as CurrentCommand
 
 const runOverride = <State, Command extends Tagged, HooksR>(
-  override: unknown,
+  override: (command: Command, ctx: OverrideContext<State, HooksR>) => Effect.Effect<unknown, unknown, HooksR>,
   command: Command,
   ctx: OverrideContext<State, HooksR>
-): Effect.Effect<unknown, unknown, HooksR> => {
-  const invoke = override as (
-    command: Command,
-    ctx: OverrideContext<State, HooksR>
-  ) => Effect.Effect<unknown, unknown, HooksR>
-  return invoke(command, ctx)
-}
+): Effect.Effect<unknown, unknown, HooksR> => override(command, ctx)
 
 const dispatchHandler = <State, Cmd extends Tagged, Handlers, Event extends Tagged, Err, R>(
   handlers: Handlers,
@@ -311,7 +308,7 @@ export interface Definition<
     group: RpcGroup.RpcGroup<Rpcs>,
     path: `/${string}`,
     handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
-  ) => Layer.Layer<never, never, R>
+  ) => ReturnType<typeof makeRoute<Rpcs, R>>
 }
 
 /**
@@ -378,7 +375,7 @@ export const define = <
           allEvents = allEvents.concat(result.events)
           currentState = result.state
         }
-        return { events: allEvents as ReadonlyArray<Event>, state: currentState }
+        return { events: allEvents, state: currentState }
       })
 
     const toEntityLayer = <
@@ -420,7 +417,12 @@ export const define = <
             const handlerTag = tag as keyof Entity.HandlersFrom<Rpcs>
 
             if (adapter.overrides?.[tag]) {
-              const override = adapter.overrides[tag]!
+              // The override expects Extract<Command, {_tag: tag}> but command is Command.
+              // Runtime tag dispatch guarantees the command matches; cast isolates this here.
+              const override = adapter.overrides[tag]! as (
+                command: Command,
+                ctx: OverrideContext<State, AdapterR<Adapter>>
+              ) => Effect.Effect<unknown, unknown, AdapterR<Adapter>>
               const OverrideCtor = commandsByTag[tag]
               handlers[handlerTag] = ((request: { readonly payload: unknown }) => {
                 const command = instantiateCommand(OverrideCtor, request.payload)
@@ -581,7 +583,7 @@ export const define = <
             return next
           }
 
-          const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, unknown, unknown> => {
+          const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, never, unknown> => {
             accessOrder.set(entityId, Date.now())
             if (map.has(entityId)) return Effect.succeed(map.get(entityId)!)
             if (!adapter.snapshots) return Effect.succeed({ state: options.initialState, revision: 0 })
@@ -591,7 +593,7 @@ export const define = <
             )
           }
 
-          const getState = (entityId: string): Effect.Effect<State, unknown, unknown> =>
+          const getState = (entityId: string): Effect.Effect<State, never, unknown> =>
             SynchronizedRef.get(store).pipe(
               Effect.flatMap((map) => getOrLoad(map, entityId)),
               Effect.map(({ state }) => state)
@@ -603,7 +605,12 @@ export const define = <
             const handlerTag = tag as keyof RpcGroup.HandlersFrom<Rpcs>
 
             if (adapter.overrides?.[tag]) {
-              const override = adapter.overrides[tag]!
+              // The override expects Extract<Command, {_tag: tag}> but command is Command.
+              // Runtime tag dispatch guarantees the command matches; cast isolates this here.
+              const override = adapter.overrides[tag]! as (
+                command: Command,
+                ctx: OverrideContext<State, AdapterR<Adapter>>
+              ) => Effect.Effect<unknown, unknown, AdapterR<Adapter>>
               handlers[handlerTag] = ((payload: unknown) => {
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
@@ -709,7 +716,7 @@ export const define = <
       group: RpcGroup.RpcGroup<Rpcs>,
       path: `/${string}`,
       handlers: Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
-    ) => makeRoute(group, path, handlers) as Layer.Layer<never, never, R>
+    ) => makeRoute(group, path, handlers)
 
     return {
       initialState: options.initialState,

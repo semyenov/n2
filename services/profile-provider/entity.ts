@@ -1,10 +1,9 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
-import * as Option from "effect/Option"
 import { Entity, EntityProxy, EntityProxyServer } from "@effect/cluster"
 import * as EventLogApi from "@effect/experimental/EventLog"
 import * as Schedule from "effect/Schedule"
-import { ProfileProvider, initialProfileState } from "./aggregate.js"
+import { ProfileProvider, initialProfileState, toCommandResult } from "./aggregate.js"
 import { InfrastructureLayer } from "./layers.js"
 import { ProfileProviderEventGroup, ProfileProviderEventLogSchema } from "./events.js"
 import { ProfileProviderSnapshotOps } from "./snapshots.js"
@@ -12,7 +11,6 @@ import {
   type ProfileCommand,
   type ProfileEvent,
   type ProfileState,
-  CommandResult,
   CreateProfile,
   MergeProfileData,
   ProfileError,
@@ -49,33 +47,45 @@ const postHandle = ({ command, state }: { command: ProfileCommand; events: Reado
   return state
 }
 
+const toError = (error: unknown) =>
+  error instanceof ProfileError ? error : new ProfileError({ message: String(error) })
+
+const publishRetry = Schedule.exponential("100 millis").pipe(
+  Schedule.jittered,
+  Schedule.intersect(Schedule.recurs(3))
+)
+
+const overrides = {
+  GetProfile: (command: Extract<ProfileCommand, { readonly _tag: "GetProfile" }>, ctx: {
+    readonly getState: (entityId: string) => Effect.Effect<ProfileState, never, unknown>
+  }) =>
+    ctx.getState(command.profileId).pipe(
+      Effect.flatMap((state) =>
+        state.status === "empty"
+          ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
+          : Effect.succeed(state)
+      )
+    ),
+  GetProfileHistory: (command: Extract<ProfileCommand, { readonly _tag: "GetProfileHistory" }>, ctx: {
+    readonly getState: (entityId: string) => Effect.Effect<ProfileState, never, unknown>
+  }) =>
+    ctx.getState(command.profileId).pipe(
+      Effect.flatMap((state) =>
+        state.status === "empty"
+          ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
+          : Effect.succeed(toHistory(state))
+      )
+    )
+}
+
 export const ProfileProviderEntityLayer = ProfileProvider.toEntityLayer(
   ProfileProviderEntity,
   {
-    toResult: ({ entityId, state }) =>
-      new CommandResult({ profileId: entityId, branchId: state.activeBranchId, revision: state.revision }),
-    toError: (error) =>
-      error instanceof ProfileError ? error : new ProfileError({ message: String(error) }),
+    toResult: ({ entityId, state }) => toCommandResult(entityId, state),
+    toError,
     snapshots: ProfileProviderSnapshotOps,
     postHandle,
-    overrides: {
-      GetProfile: (command, ctx) =>
-        ctx.getState(command.profileId).pipe(
-          Effect.flatMap((state) =>
-            state.status === "empty"
-              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
-              : Effect.succeed(state)
-          )
-        ),
-      GetProfileHistory: (command, ctx) =>
-        ctx.getState(command.profileId).pipe(
-          Effect.flatMap((state) =>
-            state.status === "empty"
-              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
-              : Effect.succeed(toHistory(state))
-          )
-        )
-    },
+    overrides
   },
   { maxIdleTime: "10 minutes", concurrency: "unbounded" }
 )
@@ -83,25 +93,17 @@ export const ProfileProviderEntityLayer = ProfileProvider.toEntityLayer(
 export const ProfileProviderProxyRpcs = EntityProxy.toRpcGroup(ProfileProviderEntity)
 export const ProfileProviderProxyHandlers = EntityProxyServer.layerRpcHandlers(ProfileProviderEntity)
 
-const publishRetry = Schedule.exponential("100 millis").pipe(
-  Schedule.jittered,
-  Schedule.intersect(Schedule.recurs(3))
-)
-
 export const ProfileProviderHandlersRaw = ProfileProvider.toStatefulRpcHandlers(
   ProfileProviderRpcs,
   {
     entityId: (command) => command.profileId,
-    toResult: ({ entityId, state }) =>
-      new CommandResult({ profileId: entityId, branchId: state.activeBranchId, revision: state.revision }),
-    toError: (error) =>
-      error instanceof ProfileError ? error : new ProfileError({ message: String(error) }),
+    toResult: ({ entityId, state }) => toCommandResult(entityId, state),
+    toError,
     snapshots: ProfileProviderSnapshotOps,
     postHandle,
     afterCommit: ({ events }) =>
       Effect.gen(function* () {
         const publish = yield* EventLogApi.makeClient(ProfileProviderEventLogSchema)
-        type EventTag = ProfileEvent["_tag"]
         yield* Effect.forEach(
           events,
           (event) => publish(event._tag, event),
@@ -112,24 +114,7 @@ export const ProfileProviderHandlersRaw = ProfileProvider.toStatefulRpcHandlers(
         Effect.tapError((error) => Effect.logError(`[profile-provider] event publish failed: ${String(error)}`))
       ),
     metrics: { prefix: "profile_provider" },
-    overrides: {
-      GetProfile: (command, ctx) =>
-        ctx.getState(command.profileId).pipe(
-          Effect.flatMap((state) =>
-            state.status === "empty"
-              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
-              : Effect.succeed(state)
-          )
-        ),
-      GetProfileHistory: (command, ctx) =>
-        ctx.getState(command.profileId).pipe(
-          Effect.flatMap((state) =>
-            state.status === "empty"
-              ? Effect.fail(new ProfileNotFound({ profileId: command.profileId }))
-              : Effect.succeed(toHistory(state))
-          )
-        )
-    }
+    overrides
   }
 )
 

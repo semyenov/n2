@@ -23,6 +23,15 @@
 import type * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 
+type StoreMethodContext<
+  Store,
+  StoreMethod extends keyof Store,
+  Event
+> = Store[StoreMethod] extends (event: Event) => Effect.Effect<unknown, unknown, infer R> ? R : never
+
+type OutboxContext<Outbox, Message> =
+  Outbox extends { readonly enqueue: (message: Message) => Effect.Effect<unknown, unknown, infer R> } ? R : never
+
 /**
  * Create a projection handler function for use with `EventLog.group(...).handle()`.
  *
@@ -37,13 +46,11 @@ export const wireProjectionHandler = <
   Event extends { readonly _tag: string },
   Payload,
   StoreMethod extends string,
-  StoreR,
-  Store extends { readonly [K in StoreMethod]: (event: Event) => Effect.Effect<void, unknown, StoreR> },
+  Store extends { readonly [K in StoreMethod]: (event: Event) => Effect.Effect<void, unknown, unknown> },
   Message = never,
-  OutboxR = never,
   OutboxI = never,
-  Outbox extends { readonly enqueue: (message: Message) => Effect.Effect<void, unknown, OutboxR> } = {
-    readonly enqueue: (message: Message) => Effect.Effect<void, unknown, OutboxR>
+  Outbox extends { readonly enqueue: (message: Message) => Effect.Effect<void, unknown, unknown> } = {
+    readonly enqueue: (message: Message) => Effect.Effect<void, unknown, never>
   }
 >(
   storeTag: Context.Tag<StoreI, Store>,
@@ -51,14 +58,30 @@ export const wireProjectionHandler = <
   EventCtor: new (payload: Payload) => Event,
   storeMethod: StoreMethod,
   makeMessage?: (event: Event) => Message
-) =>
+): ((input: { readonly payload: Payload }) => Effect.Effect<
+  void,
+  never,
+  StoreI | StoreMethodContext<Store, StoreMethod, Event> | OutboxI | OutboxContext<Outbox, Message>
+>) =>
   ({ payload }: { payload: Payload }) =>
     Effect.gen(function* () {
       const store = yield* storeTag
       const event = new EventCtor(payload)
-      yield* store[storeMethod](event)
+      // Generic indexed access loses the concrete Effect context for this method.
+      const runStore = store[storeMethod](event) as Effect.Effect<
+        void,
+        unknown,
+        StoreMethodContext<Store, StoreMethod, Event>
+      >
+      yield* runStore
       if (outboxTag && makeMessage) {
         const outbox = yield* outboxTag
-        yield* outbox.enqueue(makeMessage(event))
+        // Preserve the enqueue context derived from the concrete outbox service.
+        const enqueue = outbox.enqueue(makeMessage(event)) as Effect.Effect<
+          void,
+          unknown,
+          OutboxContext<Outbox, Message>
+        >
+        yield* enqueue
       }
     }).pipe(Effect.orDie)

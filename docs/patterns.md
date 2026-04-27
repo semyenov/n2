@@ -85,6 +85,21 @@ const MyOutboxWorkerLive = outbox.makeWorkerLive({
 })
 ```
 
+For services following the standard defaults, prefer:
+
+```ts
+const outbox = makeStandardOutboxWiring({
+  tag: MyOutbox,
+  table: "my_event_outbox",
+  schema: MyEventMessage,
+  publish: startMyEventPublish,
+  metricsPrefix: "my_service.outbox"
+})
+
+export const MyOutboxLive = outbox.live
+export const MyOutboxWorkerLive = outbox.workerLive
+```
+
 The outbox provides exactly-once semantics:
 1. `enqueue` — idempotent INSERT (ON CONFLICT DO NOTHING)
 2. `claimPending` — atomic claim with `FOR UPDATE SKIP LOCKED`
@@ -123,6 +138,9 @@ Order.toEntityLayer(OrderEntity, {
   snapshots: MySnapshotOps
 })
 ```
+
+For standard SQL snapshots, `makeStandardSnapshotWiring` returns both the live
+layer and entity snapshot ops from the same config.
 
 ## Event replay
 

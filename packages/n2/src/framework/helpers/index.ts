@@ -86,9 +86,26 @@ export {
   EventPublishError
 } from "./PublishWorkflow.js"
 
+export {
+  EventMessageHeaders,
+  makeEventMessage,
+  makeEventMessageFields,
+  type EventMessageFields,
+  type EventMessageOptions,
+  type EventMessagePayload
+} from "./EventMessage.js"
+
 export { makeEventDecoder } from "./EventDecoder.js"
 
 export { wireProjectionHandler } from "./Projection.js"
+
+export {
+  makeConsoleEventPublisherLayer,
+  makeStandardOutboxWiring,
+  makeStandardSnapshotWiring,
+  type StandardOutboxWiringConfig,
+  type StandardSnapshotWiringConfig
+} from "./ServiceWiring.js"
 
 export { makeTestAggregate } from "./TestAggregate.js"
 

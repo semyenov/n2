@@ -1,5 +1,5 @@
 import * as Context from "effect/Context"
-import { makeSnapshotOps, makeSnapshotService, type SnapshotEntry, type SnapshotService } from "@semyenov/n2/helpers"
+import { makeStandardSnapshotWiring, type SnapshotEntry, type SnapshotService } from "@semyenov/n2/helpers"
 import { RequestState } from "./contracts.js"
 
 export const SNAPSHOT_EVERY = 25
@@ -11,13 +11,13 @@ export class RequestProviderSnapshots extends Context.Tag("RequestProviderSnapsh
   SnapshotService<RequestState>
 >() {}
 
-export const RequestProviderSnapshotsLive = makeSnapshotService({
+const snapshots = makeStandardSnapshotWiring({
+  tag: RequestProviderSnapshots,
   table: "request_provider_snapshots",
   stateSchema: RequestState,
-  idColumn: "request_id"
-}).makeLive(RequestProviderSnapshots)
+  idColumn: "request_id",
+  every: SNAPSHOT_EVERY
+})
 
-export const RequestProviderSnapshotOps = makeSnapshotOps(
-  RequestProviderSnapshots,
-  SNAPSHOT_EVERY
-)
+export const RequestProviderSnapshotsLive = snapshots.live
+export const RequestProviderSnapshotOps = snapshots.ops

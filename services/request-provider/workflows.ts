@@ -1,22 +1,18 @@
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
 import * as Schema from "effect/Schema"
-import { computeRetryDelaySeconds, makePublishWorkflow } from "@semyenov/n2/helpers"
+import {
+  computeRetryDelaySeconds,
+  makeConsoleEventPublisherLayer,
+  makeEventMessage,
+  makeEventMessageFields,
+  makePublishWorkflow
+} from "@semyenov/n2/helpers"
 
-const Headers = Schema.Record({ key: Schema.String, value: Schema.Unknown })
 const TOPIC = "request-provider.events"
 
 export class RequestProviderEventMessage extends Schema.Class<RequestProviderEventMessage>("RequestProviderEventMessage")({
-  id: Schema.String,
-  topic: Schema.String,
-  partitionKey: Schema.String,
-  eventType: Schema.String,
-  requestId: Schema.UUID,
-  revision: Schema.Number.pipe(Schema.int()),
-  occurredAt: Schema.String,
-  payload: Schema.Unknown,
-  headers: Headers
+  ...makeEventMessageFields("requestId")
 }) {}
 
 export class RequestProviderEventPublisher extends Context.Tag("RequestProviderEventPublisher")<
@@ -36,22 +32,16 @@ export const makeRequestProviderEventMessage = (options: {
   readonly payload: unknown
   readonly headers?: Record<string, unknown>
 }) =>
-  new RequestProviderEventMessage({
-    id: `${options.requestId}:${options.revision}:${options.eventType}`,
+  new RequestProviderEventMessage(makeEventMessage({
     topic: TOPIC,
-    partitionKey: options.requestId,
-    eventType: options.eventType,
-    requestId: options.requestId,
+    entityIdKey: "requestId",
+    entityId: options.requestId,
     revision: options.revision,
+    eventType: options.eventType,
     occurredAt: options.occurredAt,
     payload: options.payload,
-    headers: {
-      eventType: options.eventType,
-      requestId: options.requestId,
-      revision: options.revision,
-      ...(options.headers ?? {})
-    }
-  })
+    headers: options.headers
+  }))
 
 const publishWorkflow = makePublishWorkflow({
   name: "RequestEventPublish",
@@ -64,17 +54,7 @@ export const RequestEventPublishWorkflow = publishWorkflow.workflow
 export const startRequestEventPublish = publishWorkflow.start
 export const RequestProviderEventPublishHandlers = publishWorkflow.handlers
 
-export const RequestProviderEventPublisherLive = Layer.succeed(
+export const RequestProviderEventPublisherLive = makeConsoleEventPublisherLayer(
   RequestProviderEventPublisher,
-  {
-    publish: (message) =>
-      Effect.logInfo("[request-provider] event published").pipe(
-        Effect.annotateLogs({
-          eventMessageId: message.id,
-          topic: message.topic,
-          partitionKey: message.partitionKey,
-          payloadSize: JSON.stringify(message.payload).length
-        })
-      )
-  }
+  "[request-provider] event published"
 )
