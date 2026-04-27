@@ -11,9 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bunx tsc --noEmit
       - run: cd packages/n2 && bun test
-      - run: cd services/profiler && bun test
+      - run: cd services/profile-provider && bun test
+      - run: cd services/request-provider && bun test
       - run: cd examples/order && bun test

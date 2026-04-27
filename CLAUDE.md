@@ -8,8 +8,11 @@ Full documentation is in [docs/](docs/) — see [Getting Started](docs/getting-s
 N2 is a lightweight framework for building event-sourced microservices using **Effect-TS** and **Bun**. This is a Bun workspace monorepo:
 
 - **`packages/n2`** — the framework package
-- **`services/profiler`** — profile provider service (event sourcing, snapshots, outbox, ClickHouse projections, replay)
+- **`services/profile-provider`** — profile provider service (git submodule → `quaterbit/qb.service.profiler`)
+- **`services/request-provider`** — request provider service (git submodule → `quaterbit/qb.service.request`)
 - **`examples/order`** — order example (sagas, projections, cluster)
+
+The two services are git submodules. Source-of-truth for service code lives in their own repos; the monorepo tracks pinned submodule pointers and continues to develop the framework. Edit the service code inside the submodule, push there, then bump the submodule pointer in the monorepo.
 
 The framework provides:
 
@@ -25,18 +28,20 @@ bunx tsc --noEmit            # type check entire monorepo (strict mode)
 
 # Run tests per workspace
 cd packages/n2 && bun test
-cd services/profiler && bun test
+cd services/profile-provider && bun test
+cd services/request-provider && bun test
 cd examples/order && bun test
 
 # Run a single test file
 bun test packages/n2/src/framework/helpers/Definition.test.ts
-bun test services/profiler/aggregate.test.ts
+bun test services/profile-provider/src/aggregate.test.ts
 bun test examples/order/aggregate.test.ts
 
 # Run services
-bun examples/order/server.ts                # order dev server (port 3000)
-bun services/profiler/server.ts             # profiler dev server
-bun services/profiler/replay.ts --dry-run   # replay projections
+bun examples/order/server.ts                          # order dev server (port 3000)
+bun services/profile-provider/src/server.ts          # profile provider dev server
+bun services/profile-provider/src/replay.ts --dry-run # replay projections
+bun services/request-provider/src/server.ts          # request provider dev server
 ```
 
 After any meaningful change, run `bunx tsc --noEmit` then tests in the affected workspace(s).
@@ -111,7 +116,10 @@ packages/n2/                  Framework package (name: "@semyenov/n2")
     testing/                  DeterministicIdGenerator, TestClock for pure domain tests
   src/adapters/http/          Bun HTTP server + RPC route wiring
 
-services/profiler/            Profile provider service (7 events, snapshots, outbox, ClickHouse projections, replay)
+services/profile-provider/    Profile provider service — submodule of quaterbit/qb.service.profiler
+                              (7 events, snapshots, outbox, ClickHouse projections, replay; src/ layout)
+services/request-provider/    Request provider service — submodule of quaterbit/qb.service.request
+                              (4 events, snapshots, outbox, ClickHouse projections, replay; src/ layout)
 
 examples/order/               Order example (6 commands, sagas, projections, cluster)
 ```

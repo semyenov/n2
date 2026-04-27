@@ -25,9 +25,11 @@ Run it with:
 bun examples/order/server.ts
 ```
 
-## Profiler — advanced production-style service
+## Profile provider — advanced production-style service
 
-**Location**: `services/profiler/`
+**Location**: `services/profile-provider/` (git submodule of `quaterbit/qb.service.profiler`; source under `src/`).
+
+A second submodule `services/request-provider/` follows the same pattern for the request aggregate.
 
 The production-ops reference: snapshots, transactional outbox, durable publish
 workflows, ClickHouse projections, replay, and cluster wiring.
@@ -49,13 +51,13 @@ workflows, ClickHouse projections, replay, and cluster wiring.
 Useful commands:
 
 ```bash
-bun services/profiler/server.ts
-bun services/profiler/replay.ts --dry-run
+bun services/profile-provider/src/server.ts
+bun services/profile-provider/src/replay.ts --dry-run
 ```
 
-### Starting the profiler cluster
+### Starting the profile provider cluster
 
-`services/profiler/cluster.ts` runs the profiler through `@effect/cluster`
+`services/profile-provider/src/cluster.ts` runs the profile provider through `@effect/cluster`
 sharding. Use it when you want multiple runners sharing PostgreSQL-backed
 cluster storage while exposing JSON-RPC over HTTP.
 
@@ -85,7 +87,7 @@ CLICKHOUSE_URL=http://localhost:8123 \
 HOST=127.0.0.1 \
 PORT=34431 \
 API_PORT=4100 \
-bun services/profiler/cluster.ts
+bun services/profile-provider/src/cluster.ts
 ```
 
 Two local runners:
@@ -97,7 +99,7 @@ CLICKHOUSE_URL=http://localhost:8123 \
 HOST=127.0.0.1 \
 PORT=34431 \
 API_PORT=4100 \
-bun services/profiler/cluster.ts
+bun services/profile-provider/src/cluster.ts
 
 # Terminal 2
 DATABASE_URL=postgres://user:pass@localhost:5432/n2 \
@@ -105,7 +107,7 @@ CLICKHOUSE_URL=http://localhost:8123 \
 HOST=127.0.0.1 \
 PORT=34432 \
 API_PORT=4101 \
-bun services/profiler/cluster.ts
+bun services/profile-provider/src/cluster.ts
 ```
 
 Both runners must share the same PostgreSQL and ClickHouse configuration.
@@ -120,4 +122,4 @@ curl -s http://localhost:4101/health
 ```
 
 The JSON-RPC endpoint is `/rpc/profile-provider`. For local development
-without sharding, use `bun services/profiler/server.ts` instead.
+without sharding, use `bun services/profile-provider/src/server.ts` instead.

@@ -8,7 +8,7 @@ A framework for building event-sourced microservices using **Effect-TS** and **B
 bun install
 bun test
 bun examples/order/server.ts                # order dev server
-bun services/profiler/server.ts             # advanced production-style service
+bun services/profile-provider/src/server.ts # advanced production-style service
 ```
 
 ## Define an aggregate
@@ -81,7 +81,8 @@ const OrderHandlers = Order.toStatefulRpcHandlers(OrderRpcs, {
 | Example | Complexity | Features |
 |---------|-----------|----------|
 | `examples/order/` | Medium | commands, projections, snapshots, workflows |
-| `services/profiler/` | Advanced | snapshots, outbox, ClickHouse, replay |
+| `services/profile-provider/` | Advanced (submodule) | snapshots, outbox, ClickHouse, replay |
+| `services/request-provider/` | Advanced (submodule) | snapshots, outbox, ClickHouse, replay |
 
 ## Effect-TS integration
 

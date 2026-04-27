@@ -1,0 +1,6 @@
+[submodule "services/profile-provider"]
+	path = services/profile-provider
+	url = git@github.com:quaterbit/qb.service.profiler
+[submodule "services/request-provider"]
+	path = services/request-provider
+	url = git@github.com:quaterbit/qb.service.request
