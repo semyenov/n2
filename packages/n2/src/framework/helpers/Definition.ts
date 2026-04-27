@@ -91,6 +91,18 @@ type AdapterR<A> =
   | (A extends { readonly afterCommit: infer AC } ? ExtractEffectR<AC> : never)
   | (A extends { readonly overrides: { readonly [k: string]: infer O } } ? ExtractEffectR<O> : never)
 
+type OverrideContext<State, HooksR> = {
+  readonly entityId: string
+  readonly getState: (entityId: string) => Effect.Effect<State, unknown, HooksR>
+}
+
+type OverrideHandlers<State, Command extends Tagged, HooksR> = {
+  readonly [K in TagOf<Command>]?: (
+    command: Extract<Command, { readonly _tag: K }>,
+    ctx: OverrideContext<State, HooksR>
+  ) => Effect.Effect<unknown, unknown, HooksR>
+}
+
 const commandTags = <Command extends Tagged>(
   commands: CommandConstructors<Command>
 ): ReadonlyArray<TagOf<Command>> =>
@@ -101,6 +113,31 @@ const instantiateCommand = <CurrentCommand extends Tagged>(
   payload: unknown
 ): CurrentCommand =>
   Reflect.construct(Command, [payload]) as CurrentCommand
+
+const runOverride = <State, Command extends Tagged, HooksR>(
+  override: unknown,
+  command: Command,
+  ctx: OverrideContext<State, HooksR>
+): Effect.Effect<unknown, unknown, HooksR> => {
+  const invoke = override as (
+    command: Command,
+    ctx: OverrideContext<State, HooksR>
+  ) => Effect.Effect<unknown, unknown, HooksR>
+  return invoke(command, ctx)
+}
+
+const dispatchHandler = <State, Cmd extends Tagged, Handlers, Event extends Tagged, Err, R>(
+  handlers: Handlers,
+  command: Cmd
+): (state: State, command: Cmd) => Effect.Effect<ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>, Err, R> => {
+  // TypeScript cannot correlate a runtime `_tag` lookup with the matching
+  // mapped handler parameter, so aggregate dispatch keeps this cast isolated.
+  const byTag = handlers as Record<string, unknown>
+  return byTag[command._tag] as (
+    state: State,
+    command: Cmd
+  ) => Effect.Effect<ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>, Err, R>
+}
 
 const makeRoute = <Rpcs extends Rpc.Any, R>(
   group: RpcGroup.RpcGroup<Rpcs>,
@@ -156,12 +193,7 @@ export interface EntityAdapterOptions<State, Command extends Tagged, Event, Resu
   /** Override specific command handlers (e.g. read queries). Bypasses dispatch entirely.
    *  Each key narrows the command to the specific tagged member for that tag.
    *  `getState` takes an entityId for API compatibility with stateful RPC overrides. */
-  readonly overrides?: {
-    readonly [K in TagOf<Command>]?: (
-      command: Extract<Command, { readonly _tag: K }>,
-      ctx: { readonly entityId: string; readonly getState: (entityId: string) => Effect.Effect<State, unknown, HooksR> }
-    ) => Effect.Effect<unknown, unknown, HooksR>
-  }
+  readonly overrides?: OverrideHandlers<State, Command, HooksR>
 }
 
 /** Options for stateful multi-entity RPC handlers (dev/test mode). */
@@ -208,12 +240,7 @@ export interface StatefulRpcAdapterOptions<State, Command extends Tagged, Event,
   readonly maxEntries?: number
   /** Override specific command handlers (e.g. read queries).
    *  Each key narrows the command to the specific tagged member for that tag. */
-  readonly overrides?: {
-    readonly [K in TagOf<Command>]?: (
-      command: Extract<Command, { readonly _tag: K }>,
-      ctx: { readonly entityId: string; readonly getState: (entityId: string) => Effect.Effect<State, unknown, HooksR> }
-    ) => Effect.Effect<unknown, unknown, HooksR>
-  }
+  readonly overrides?: OverrideHandlers<State, Command, HooksR>
 }
 
 /** Options for mapping execution results when wiring to stateless RPC handlers. */
@@ -318,15 +345,8 @@ export const define = <
       return (options.evolve as Record<TagOf<Event>, (state: State, event: Event) => State>)[tag](state, event)
     }
 
-    // Generic dispatch: indexes the precise per-tag handler and calls it with
-    // the specific command. One `as unknown as` is unavoidable here:
-    // TypeScript cannot correlate `command._tag as TagOf<Cmd>` with the handler's
-    // parameter type `Extract<Command, {_tag: TagOf<Cmd>}>` — function parameter
-    // contravariance prevents a direct `as` cast on a function type. This is the
-    // single remaining unsafe cast, replacing four scattered casts in the old design.
     const dispatch = <Cmd extends Command>(state: State, command: Cmd): Effect.Effect<ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>, Err, R> => {
-      const tag = command._tag as TagOf<Cmd>
-      const handler = options.decide[tag] as unknown as (state: State, command: Cmd) => Effect.Effect<ReadonlyArray<DecideEventsFor<Cmd, Handlers, Event>>, Err, R>
+      const handler = dispatchHandler<State, Cmd, Handlers, Event, Err, R>(options.decide, command)
       return handler(state, command)
     }
 
@@ -365,10 +385,11 @@ export const define = <
       Type extends string,
       Rpcs extends Rpc.Any,
       Result,
-      MappedErr
+      MappedErr,
+      const Adapter extends EntityAdapterOptions<State, Command, Event, Result, MappedErr>
     >(
       entity: Entity.Entity<Type, Rpcs>,
-      adapter: EntityAdapterOptions<State, Command, Event, Result, MappedErr>,
+      adapter: Adapter,
       layerOptions?: {
         readonly maxIdleTime?: DurationInput
         readonly concurrency?: number | "unbounded"
@@ -376,7 +397,7 @@ export const define = <
     ): Layer.Layer<
       never,
       never,
-      R | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
+      R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
     > =>
       entity.toLayer(
         Effect.gen(function* () {
@@ -403,7 +424,10 @@ export const define = <
               const OverrideCtor = commandsByTag[tag]
               handlers[handlerTag] = ((request: { readonly payload: unknown }) => {
                 const command = instantiateCommand(OverrideCtor, request.payload)
-                const run = (override as unknown as (cmd: Command, ctx: { entityId: string; getState: (entityId: string) => Effect.Effect<State, unknown, unknown> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId: address.entityId, getState: (_id: string) => Ref.get(stateRef) })
+                const run = runOverride(override, command, {
+                  entityId: address.entityId,
+                  getState: (_id: string) => Ref.get(stateRef)
+                })
                 if (adapter.middleware) {
                   return Effect.zipRight(
                     adapter.middleware({ entityId: address.entityId, command }),
@@ -477,7 +501,7 @@ export const define = <
       ) as Layer.Layer<
         never,
         never,
-        R | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
+        R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
       >
 
     const toRpcHandlers = <
@@ -526,11 +550,12 @@ export const define = <
     const toStatefulRpcHandlers = <
       Rpcs extends Rpc.Any,
       Result,
-      MappedErr
+      MappedErr,
+      const Adapter extends StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
     >(
       group: RpcGroup.RpcGroup<Rpcs>,
-      adapter: StatefulRpcAdapterOptions<State, Command, Event, Result, MappedErr>
-    ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R> => {
+      adapter: Adapter
+    ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R | AdapterR<Adapter>> => {
       const metrics = adapter.metrics
         ? {
             total: Metric.counter(`${adapter.metrics.prefix}.commands.total`, { incremental: true }),
@@ -582,7 +607,7 @@ export const define = <
               handlers[handlerTag] = ((payload: unknown) => {
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
-                const run = (override as unknown as (cmd: Command, ctx: { entityId: string; getState: (entityId: string) => Effect.Effect<State, unknown, unknown> }) => Effect.Effect<unknown, unknown, unknown>)(command, { entityId, getState })
+                const run = runOverride(override, command, { entityId, getState })
                 if (adapter.middleware) {
                   return Effect.zipRight(
                     adapter.middleware({ entityId, command }),
@@ -677,7 +702,7 @@ export const define = <
             handlers as Partial<RpcGroup.HandlersFrom<Rpcs>> & RpcGroup.HandlersFrom<Rpcs>
           )
         })
-      ) as Layer.Layer<Rpc.ToHandler<Rpcs>, never, R>
+      ) as Layer.Layer<Rpc.ToHandler<Rpcs>, never, R | AdapterR<Adapter>>
     }
 
     const toHttpRoute = <Rpcs extends Rpc.Any>(

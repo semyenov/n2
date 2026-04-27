@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import { makeSnapshotService } from "n2/framework/helpers"
+ * import { makeSnapshotService } from "@semyenov/n2/framework/helpers"
  *
  * export class MySnapshots extends Context.Tag("MySnapshots")<MySnapshots, SnapshotService<MyState>>() {}
  * export const MySnapshotsLive = makeSnapshotService({

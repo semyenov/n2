@@ -33,6 +33,7 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import type { EventGroup } from "@effect/experimental"
 import type * as EventJournalApi from "@effect/experimental/EventJournal"
+import { eventGroupPayloadSchemas } from "./EventGroupAccess.js"
 
 type Tagged = { readonly _tag: string }
 
@@ -58,13 +59,16 @@ export const makeEventDecoder = <Event extends Tagged>(
     readonly migrations?: { readonly [tag: string]: EventMigration }
   }
 ) => {
-  const events = (eventGroup as unknown as { events: Record<string, { payloadMsgPack: Schema.Schema.All } | undefined> }).events
-  const decoders = new Map<string, (payload: unknown) => Effect.Effect<unknown>>()
+  const events = eventGroupPayloadSchemas(eventGroup)
+  const decoders = new Map<string, (payload: unknown) => Effect.Effect<unknown, unknown, never>>()
   const migrations = options?.migrations ?? {}
 
   for (const [tag, schema] of Object.entries(events)) {
     if (schema) {
-      decoders.set(tag, Schema.decode(schema.payloadMsgPack as never) as (u: unknown) => Effect.Effect<unknown>)
+      decoders.set(
+        tag,
+        Schema.decodeUnknown(schema as Schema.Schema<unknown, unknown, never>) as (payload: unknown) => Effect.Effect<unknown, unknown, never>
+      )
     }
   }
 

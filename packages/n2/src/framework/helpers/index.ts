@@ -6,7 +6,7 @@
  *
  * @example
  * ```ts
- * import * as N2 from "n2/helpers"
+ * import * as N2 from "@semyenov/n2/helpers"
  *
  * const OrderCommands = N2.defineCommands(
  *   (p) => p.orderId,

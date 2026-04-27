@@ -5,7 +5,7 @@
  * Schema codec serialization and SQL upsert logic.
  */
 import * as Context from "effect/Context"
-import { makeSnapshotOps, makeSnapshotService, type SnapshotService, type SnapshotEntry } from "n2/helpers"
+import { makeSnapshotOps, makeSnapshotService, type SnapshotService, type SnapshotEntry } from "@semyenov/n2/helpers"
 import { ProfileState } from "./contracts.js"
 
 export const SNAPSHOT_EVERY = 25

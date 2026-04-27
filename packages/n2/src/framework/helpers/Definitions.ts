@@ -2,16 +2,19 @@ import * as Record from "effect/Record"
 import * as Schema from "effect/Schema"
 import { ClusterSchema, Entity } from "@effect/cluster"
 import { EventGroup } from "@effect/experimental"
-import type { Rpc } from "@effect/rpc"
-import { rpcFromCommand, type RpcFromCommandDefinition } from "./EntityBuilder.js"
+import type { RpcTupleFromCommands } from "./EntityBuilder.js"
+import { rpcListFromCommandDefinitions } from "./EntityBuilder.js"
 
 type Tagged = { readonly _tag: string }
 
+type TaggedFields = { readonly _tag: Schema.Struct.Field } & Schema.Struct.Fields
+
 type TaggedSchema = Schema.Schema.All & {
   readonly _tag: string
+  readonly fields: TaggedFields
 }
 
-type CommandFields = { readonly _tag: Schema.Struct.Field } & Schema.Struct.Fields
+type CommandFields = TaggedFields
 
 type TaggedConstructor<A extends Tagged> = TaggedSchema & {
   readonly _tag: A["_tag"]
@@ -49,6 +52,12 @@ type CommandPayloadFieldsOf<Command extends CommandDefinition<Tagged>> =
 type CommandPayloadTypeOf<Command extends CommandDefinition<Tagged>> =
   Schema.Simplify<Schema.Struct.Type<NoInfer<CommandPayloadFieldsOf<Command>>>>
 
+type TaggedPayloadFieldsOf<Member extends TaggedSchema> =
+  Omit<Member["fields"], "_tag">
+
+type TaggedPayloadTypeOf<Member extends TaggedSchema> =
+  Schema.Simplify<Schema.Struct.Type<NoInfer<TaggedPayloadFieldsOf<Member>>>>
+
 type CommandTagOf<Command extends CommandDefinition<Tagged>> =
   CommandInfoOf<Command>["tag"]
 
@@ -78,19 +87,18 @@ type TaggedCollection<Members extends [TaggedSchema, ...Array<TaggedSchema>]> = 
   readonly constructors: TaggedConstructors<Members>
 }
 
+type TaggedPayloadUnion<Members extends [TaggedSchema, ...Array<TaggedSchema>]> =
+  TaggedPayloadTypeOf<Members[number]>
+
 type AnyCommandDefinition = CommandDefinition<Tagged>
 
 type CommandPayload<Command extends AnyCommandDefinition> = CommandPayloadTypeOf<Command>
-
-type RpcTuple<Commands extends ReadonlyArray<AnyCommandDefinition>> = {
-  readonly [K in keyof Commands]: RpcFromCommandDefinition<Commands[K]>
-}
 
 type PrimaryKey<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> =
   (payload: CommandPayload<Members[number]>) => string
 
 type EntityRpcs<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> =
-  RpcTuple<Members>[number]
+  RpcTupleFromCommands<Members>[number]
 
 type CommandCollection<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> = {
   readonly schema: SchemaUnion<Members>
@@ -119,24 +127,15 @@ const constructorsByTag = <Members extends ReadonlyArray<TaggedSchema>>(
 ): TaggedConstructors<Members> =>
   Record.fromIterableWith(members, (member) => [member._tag, member]) as TaggedConstructors<Members>
 
-function buildRpcTuple<
-  Head extends AnyCommandDefinition,
-  const Tail extends ReadonlyArray<AnyCommandDefinition>
+const makeTypedEntity = <
+  const Type extends string,
+  Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]
 >(
-  primaryKey: (payload: CommandPayload<Head | Tail[number]>) => string,
-  head: Head,
-  ...tail: Tail
-): readonly [RpcFromCommandDefinition<Head>, ...RpcTuple<Tail>]
-function buildRpcTuple(
-  primaryKey: (payload: { readonly [x: string]: any }) => string,
-  head: AnyCommandDefinition,
-  ...tail: ReadonlyArray<AnyCommandDefinition>
-): ReadonlyArray<Rpc.Any> {
-  const rpc = rpcFromCommand(head, primaryKey)
-  const [nextHead, ...nextTail] = tail
-  if (nextHead === undefined) return [rpc]
-  return [rpc, ...buildRpcTuple(primaryKey, nextHead, ...nextTail)]
-}
+  entity: unknown
+): Entity.Entity<Type, EntityRpcs<Members>> =>
+  // Entity.make brands the runtime entity type from `name`, but the generic
+  // branded Type is not preserved through the dynamic helper.
+  entity as unknown as Entity.Entity<Type, EntityRpcs<Members>>
 
 export type {
   CommandCollection,
@@ -154,6 +153,10 @@ export type {
   TaggedCollection,
   TaggedConstructor,
   TaggedConstructors,
+  TaggedFields,
+  TaggedPayloadFieldsOf,
+  TaggedPayloadTypeOf,
+  TaggedPayloadUnion,
   TaggedSchema
 }
 
@@ -180,7 +183,7 @@ export const defineTaggedConstructors = <const Members extends [TaggedSchema, ..
  *   .add({ tag: "OrderCreated", primaryKey: (p) => p.orderId, payload: eventPayloadSchema(OrderCreated) })
  * ```
  */
-export const eventPayloadSchema = <F extends Schema.Struct.Fields & { _tag: any }>(cls: { fields: F }) => {
+export const eventPayloadSchema = <F extends TaggedFields>(cls: { readonly fields: F }) => {
   const { _tag: _, ...rest } = cls.fields
   return Schema.Struct(rest as { [K in Exclude<keyof F, "_tag">]: F[K] })
 }
@@ -198,19 +201,19 @@ export const defineEvents = <const Members extends [TaggedSchema, ...Array<Tagge
    * export const ProfileEventGroup = ProfileEvents.toEventGroup((p) => p.profileId)
    * ```
    */
-  readonly toEventGroup: <PK extends (payload: any) => string>(primaryKey: PK) => EventGroup.EventGroup<any>
+  readonly toEventGroup: (primaryKey: (payload: TaggedPayloadUnion<Members>) => string) => EventGroup.EventGroup.AnyWithProps
 } => ({
   schema: defineSchemaUnion(...members),
   constructors: constructorsByTag(members),
   toEventGroup: (primaryKey) => {
-    let group: EventGroup.EventGroup<any> = EventGroup.empty
+    let group: EventGroup.EventGroup.AnyWithProps = EventGroup.empty
     for (const member of members) {
-      const payload = eventPayloadSchema(member as any)
+      const payload = eventPayloadSchema(member)
       group = group.add({
         tag: member._tag,
-        primaryKey: primaryKey as any,
-        payload: payload as any
-      })
+        primaryKey: primaryKey as (eventPayload: Schema.Schema.Type<typeof payload>) => string,
+        payload
+      }) as EventGroup.EventGroup.AnyWithProps
     }
     return group
   }
@@ -242,11 +245,15 @@ export const defineCommands = <const Members extends [CommandDefinition<Tagged>,
 ): CommandCollection<Members> => {
   const buildEntity = (
     name: string,
-    primaryKey: (payload: any) => string,
+    primaryKey: PrimaryKey<Members>,
     persisted: boolean
   ) => {
     const [head, ...tail] = members
-    const rpcs = buildRpcTuple(primaryKey, head!, ...tail) as readonly [Rpc.Any, ...ReadonlyArray<Rpc.Any>]
+    const rpcs = rpcListFromCommandDefinitions(
+      primaryKey as (payload: CommandPayload<typeof head | typeof tail[number]>) => string,
+      head,
+      ...tail
+    )
     const entity = Entity.make(name, rpcs)
     return persisted
       ? entity.annotateRpcs(ClusterSchema.Persisted, true)
@@ -258,8 +265,8 @@ export const defineCommands = <const Members extends [CommandDefinition<Tagged>,
     members,
     constructors: constructorsByTag(members),
     toEntity: <const Type extends string>(name: Type, primaryKey: PrimaryKey<Members>) =>
-      buildEntity(name, primaryKey as (payload: any) => string, false) as unknown as Entity.Entity<Type, EntityRpcs<Members>>,
+      makeTypedEntity<Type, Members>(buildEntity(name, primaryKey, false)),
     toPersistedEntity: <const Type extends string>(name: Type, primaryKey: PrimaryKey<Members>) =>
-      buildEntity(name, primaryKey as (payload: any) => string, true) as unknown as Entity.Entity<Type, EntityRpcs<Members>>
+      makeTypedEntity<Type, Members>(buildEntity(name, primaryKey, true))
   }
 }

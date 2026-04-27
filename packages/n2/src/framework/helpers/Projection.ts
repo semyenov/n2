@@ -9,7 +9,7 @@
  *
  * @example
  * ```ts
- * import { wireProjectionHandler } from "n2/framework/helpers"
+ * import { wireProjectionHandler } from "@semyenov/n2/framework/helpers"
  *
  * export const MyProjectionLayer = EventLog.group(
  *   MyEventGroup,
@@ -33,23 +33,30 @@ import * as Effect from "effect/Effect"
  * @param makeMessage - Function to create an outbox message from the event (only needed when outboxTag is provided)
  */
 export const wireProjectionHandler = <
-  Store,
   StoreI,
-  Outbox extends { readonly enqueue: (message: any) => Effect.Effect<void, any> },
-  OutboxI,
-  Event extends { readonly _tag: string }
+  Event extends { readonly _tag: string },
+  Payload,
+  StoreMethod extends string,
+  StoreR,
+  Store extends { readonly [K in StoreMethod]: (event: Event) => Effect.Effect<void, unknown, StoreR> },
+  Message = never,
+  OutboxR = never,
+  OutboxI = never,
+  Outbox extends { readonly enqueue: (message: Message) => Effect.Effect<void, unknown, OutboxR> } = {
+    readonly enqueue: (message: Message) => Effect.Effect<void, unknown, OutboxR>
+  }
 >(
   storeTag: Context.Tag<StoreI, Store>,
   outboxTag: Context.Tag<OutboxI, Outbox> | undefined,
-  EventCtor: new (payload: any) => Event,
-  storeMethod: keyof Store & string,
-  makeMessage?: (event: Event) => any
+  EventCtor: new (payload: Payload) => Event,
+  storeMethod: StoreMethod,
+  makeMessage?: (event: Event) => Message
 ) =>
-  ({ payload }: { payload: any }) =>
+  ({ payload }: { payload: Payload }) =>
     Effect.gen(function* () {
       const store = yield* storeTag
       const event = new EventCtor(payload)
-      yield* (store as any)[storeMethod](event)
+      yield* store[storeMethod](event)
       if (outboxTag && makeMessage) {
         const outbox = yield* outboxTag
         yield* outbox.enqueue(makeMessage(event))

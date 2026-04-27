@@ -1,3 +1,16 @@
+/**
+ * Cluster entrypoint for request provider.
+ *
+ * Required:
+ *   DATABASE_URL    PostgreSQL connection string
+ *   CLICKHOUSE_URL  ClickHouse HTTP URL, e.g. http://localhost:8123
+ *
+ * Optional:
+ *   CLICKHOUSE_DATABASE  ClickHouse database (default: default)
+ *   HOST                 Runner advertised host (default: 127.0.0.1)
+ *   PORT                 Runner cluster port
+ *   API_PORT             Public JSON-RPC / health port (default: 4110)
+ */
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -5,26 +18,17 @@ import { BunClusterHttp, BunHttpServer, BunRuntime } from "@effect/platform-bun"
 import { HttpLayerRouter, HttpServerResponse } from "@effect/platform"
 import { RpcSerialization, RpcServer } from "@effect/rpc"
 import { PgClient } from "@effect/sql-pg"
-import { ProfileProviderEntityLayer, ProfileProviderProxyHandlers, ProfileProviderProxyRpcs } from "./entity.js"
+import { RequestProviderEntityLayer, RequestProviderProxyHandlers, RequestProviderProxyRpcs } from "./entity.js"
 import { ClusterInfrastructureLayer } from "./layers.js"
 import { MigrationsLayer } from "./migrate.js"
 
-/**
- * Run with both databases configured:
- *   DATABASE_URL=postgres://...
- *   CLICKHOUSE_URL=http://localhost:8123
- *
- * PostgreSQL backs sharding, snapshots, event journal, and outbox.
- * ClickHouse backs read projections.
- */
-
-const ProfileProviderRpcRoute = RpcServer
+const RequestProviderRpcRoute = RpcServer
   .layerHttpRouter({
-    group: ProfileProviderProxyRpcs,
-    path: "/rpc/profile-provider",
+    group: RequestProviderProxyRpcs,
+    path: "/rpc/request-provider",
     protocol: "http"
   }).pipe(
-    Layer.provide(ProfileProviderProxyHandlers),
+    Layer.provide(RequestProviderProxyHandlers),
     Layer.provide(RpcSerialization.layerJsonRpc())
   )
 
@@ -49,7 +53,7 @@ const ShardingLayer = BunClusterHttp.layer({
 )
 
 const EntitiesLayer = Layer.provide(
-  ProfileProviderEntityLayer,
+  RequestProviderEntityLayer,
   Layer.provide(
     Layer.merge(ClusterInfrastructureLayer, MigrationsLayer),
     Layer.merge(SqlLayer, ShardingLayer)
@@ -58,20 +62,20 @@ const EntitiesLayer = Layer.provide(
 
 BunRuntime.runMain(
   Effect.gen(function* () {
-    const apiPort = yield* Config.integer("API_PORT").pipe(Config.withDefault(4100))
-    yield* Effect.log(`Profile provider service (cluster mode) on http://localhost:${apiPort}/rpc/profile-provider`)
+    const apiPort = yield* Config.integer("API_PORT").pipe(Config.withDefault(4110))
+    yield* Effect.log(`Request provider service (cluster mode) on http://localhost:${apiPort}/rpc/request-provider`)
     yield* Effect.log("Runner cluster port is configured by HOST / PORT")
     yield* Effect.never
   }).pipe(
     Effect.provide(Layer.mergeAll(
-      HttpLayerRouter.serve(Layer.mergeAll(ProfileProviderRpcRoute, HealthRoute)),
+      HttpLayerRouter.serve(Layer.mergeAll(RequestProviderRpcRoute, HealthRoute)),
       EntitiesLayer
     )),
     Effect.provide(
       Layer.mergeAll(
         BunHttpServer.layerConfig(
           Config.map(
-            Config.integer("API_PORT").pipe(Config.withDefault(4100)),
+            Config.integer("API_PORT").pipe(Config.withDefault(4110)),
             (port) => ({ port })
           )
         ),

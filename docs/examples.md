@@ -52,3 +52,72 @@ Useful commands:
 bun services/profiler/server.ts
 bun services/profiler/replay.ts --dry-run
 ```
+
+### Starting the profiler cluster
+
+`services/profiler/cluster.ts` runs the profiler through `@effect/cluster`
+sharding. Use it when you want multiple runners sharing PostgreSQL-backed
+cluster storage while exposing JSON-RPC over HTTP.
+
+Required infrastructure:
+
+- PostgreSQL, via `DATABASE_URL`; used for sharding storage, snapshots, event
+  journal, migrations, and the outbox.
+- ClickHouse, via `CLICKHOUSE_URL`; used for read projections.
+
+Environment variables:
+
+| Variable | Required | Purpose |
+|----------|----------|---------|
+| `DATABASE_URL` | Yes | PostgreSQL connection string |
+| `CLICKHOUSE_URL` | Yes | ClickHouse HTTP URL, for example `http://localhost:8123` |
+| `CLICKHOUSE_DATABASE` | No | ClickHouse database; defaults to `default` |
+| `HOST` | No | Runner host advertised to other runners; defaults to `127.0.0.1` |
+| `PORT` | No | Runner-to-runner cluster port; default comes from `BunClusterHttp` |
+| `API_PORT` | No | Public JSON-RPC / health HTTP port; defaults to `4100` |
+| `SHARDS_PER_GROUP` | No | Total shard count; keep identical across all runners |
+
+Single runner:
+
+```bash
+DATABASE_URL=postgres://user:pass@localhost:5432/n2 \
+CLICKHOUSE_URL=http://localhost:8123 \
+HOST=127.0.0.1 \
+PORT=34431 \
+API_PORT=4100 \
+bun services/profiler/cluster.ts
+```
+
+Two local runners:
+
+```bash
+# Terminal 1
+DATABASE_URL=postgres://user:pass@localhost:5432/n2 \
+CLICKHOUSE_URL=http://localhost:8123 \
+HOST=127.0.0.1 \
+PORT=34431 \
+API_PORT=4100 \
+bun services/profiler/cluster.ts
+
+# Terminal 2
+DATABASE_URL=postgres://user:pass@localhost:5432/n2 \
+CLICKHOUSE_URL=http://localhost:8123 \
+HOST=127.0.0.1 \
+PORT=34432 \
+API_PORT=4101 \
+bun services/profiler/cluster.ts
+```
+
+Both runners must share the same PostgreSQL and ClickHouse configuration.
+Send requests to either API port; the proxy handlers forward each command to
+the runner that owns the command's shard.
+
+Smoke checks:
+
+```bash
+curl -s http://localhost:4100/health
+curl -s http://localhost:4101/health
+```
+
+The JSON-RPC endpoint is `/rpc/profile-provider`. For local development
+without sharding, use `bun services/profiler/server.ts` instead.

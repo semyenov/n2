@@ -36,11 +36,21 @@ import type { SnapshotEntry, SnapshotService } from "./Snapshots.js"
  * Creates test utilities for aggregate handler tests.
  * Provides mock snapshot store, event log, and a typed `runWith` helper.
  */
-export const makeTestAggregate = <State>(config: {
+const runProvided = <A, E, R>(
+  handlersLayer: Layer.Layer<never, never, never>,
+  program: Effect.Effect<A, E, R>
+): Promise<A> =>
+  Effect.runPromise(
+    // Test helpers intentionally collapse the provided test environment after
+    // composing handler, journal, identity, projection, and snapshot layers.
+    Effect.provide(Effect.scoped(program), handlersLayer) as unknown as Effect.Effect<A, E, never>
+  )
+
+export const makeTestAggregate = <State, SnapshotsI>(config: {
   readonly eventLogSchema: EventLogApi.EventLogSchema<EventGroup.EventGroup.Any>
   readonly noOpProjection: Layer.Layer<never, never, never>
   readonly handlersLayer: Layer.Layer<never, never, never>
-  readonly snapshotsTag: Context.Tag</* identifier */ any, SnapshotService<State>>
+  readonly snapshotsTag: Context.Tag<SnapshotsI, SnapshotService<State>>
 }) => {
   const testJournalLayer = ExpEventJournal.layerMemory
   const testIdentityLayer = Layer.succeed(Identity, Identity.makeRandom())
@@ -69,15 +79,11 @@ export const makeTestAggregate = <State>(config: {
     }
   }
 
-  const runWith = <A, E, R, P, PE, PR>(
-    handlersLayer: Layer.Layer<P, PE, PR>,
+  const runWith = <A, E, R>(
+    handlersLayer: Layer.Layer<never, never, never>,
     program: Effect.Effect<A, E, R>
   ): Promise<A> =>
-    Effect.runPromise(
-      Effect.scoped(program).pipe(
-        Effect.provide(handlersLayer)
-      ) as unknown as Effect.Effect<A, never, never>
-    )
+    runProvided(handlersLayer, program)
 
   return { makeTestLayers, runWith }
 }

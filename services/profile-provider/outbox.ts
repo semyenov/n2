@@ -1,5 +1,5 @@
 import * as Context from "effect/Context"
-import { makeOutboxJsonService, type OutboxService } from "n2/helpers"
+import { makeOutboxJsonService, type OutboxService } from "@semyenov/n2/helpers"
 import {
   ProfileProviderEventMessage,
   startProfileEventPublish

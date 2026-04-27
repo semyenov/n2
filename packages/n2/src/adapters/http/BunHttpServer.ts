@@ -14,10 +14,10 @@ import { HttpLayerRouter } from "@effect/platform"
  * @since 1.0.0
  * @category constructors
  */
-export const make = (config: {
+export const make = <R>(config: {
   readonly port: number
-  readonly rpcRoutes: Layer.Layer<never, never, any>
-}): Layer.Layer<never, never, any> =>
+  readonly rpcRoutes: Layer.Layer<never, never, R>
+}) =>
   HttpLayerRouter.serve(config.rpcRoutes).pipe(
     Layer.provide(BunHttpServer.layer({ port: config.port }))
   )

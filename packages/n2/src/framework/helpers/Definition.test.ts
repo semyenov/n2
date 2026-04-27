@@ -135,3 +135,9 @@ test("decide returns events without applying them", async () => {
 test("initialState is accessible", () => {
   expect(Counter.initialState.count).toBe(0)
 })
+
+test("defineEvents derives an EventGroup with payload schemas", () => {
+  const group = TestEvents.toEventGroup(() => "counter")
+
+  expect(Object.keys(group.events).sort()).toEqual(["Incremented", "WasReset"])
+})

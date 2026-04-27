@@ -93,7 +93,7 @@ Additional helpers:
 ### Monorepo Layout
 
 ```
-packages/n2/                  Framework package (name: "n2")
+packages/n2/                  Framework package (name: "@semyenov/n2")
   index.ts                    Root entry point → src/main.js
   src/framework/
     domain/                   Revision (optimistic concurrency), BrandedId
@@ -134,7 +134,7 @@ examples/order/               Order example (6 commands, sagas, projections, clu
 - `decide` stays pure or Effect-based with no infrastructure leakage
 - `evolve` is always a pure function (no effects)
 - Import Effect modules as namespaces: `import * as Effect from "effect/Effect"`
-- Services import framework via `import * as N2 from "n2/helpers"` (workspace package resolution)
+- Services import framework via `import * as N2 from "@semyenov/n2/helpers"` (workspace package resolution)
 - Local TypeScript import specifiers end in `.js` (ESM module resolution)
 - Tests are colocated (`*.test.ts`) and use `import { test, expect } from "bun:test"`
 - For Effect-heavy tests, use `Effect.runPromise` consistent with the existing suite

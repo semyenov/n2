@@ -1,7 +1,11 @@
 {
-  "name": "n2",
+  "name": "@semyenov/n2",
+  "version": "0.1.0",
   "type": "module",
   "module": "index.ts",
+  "publishConfig": {
+    "access": "public"
+  },
   "exports": {
     ".": "./index.ts",
     "./helpers": "./src/framework/helpers/index.ts",

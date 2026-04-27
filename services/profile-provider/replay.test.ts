@@ -33,6 +33,19 @@ const makeProfile = (profileId: string) =>
     user_meta_data: { version: 1 }
   })
 
+type CollectedReplayEvent = {
+  readonly _tag: string
+  readonly revision: number
+  readonly profileId: string
+}
+
+const runProvided = <A, E, R>(effect: Effect.Effect<A, E, R>): Promise<A> =>
+  Effect.runPromise(
+    // The in-memory EventLog layer is composed in the test body; collapse the
+    // remaining environment after the local provide chain.
+    effect as unknown as Effect.Effect<A, E, never>
+  )
+
 const NoOpProjection = EL.group(
   ProfileProviderEventGroup,
   (handlers) =>
@@ -88,7 +101,7 @@ test("collectReplayEvents filters journal entries by profile and revision range"
   const firstProfileId = "00000000-0000-4000-8000-000000000101"
   const secondProfileId = "00000000-0000-4000-8000-000000000202"
 
-  const events = await Effect.runPromise(
+  const events = await runProvided<ReadonlyArray<CollectedReplayEvent>, never, unknown>(
     Effect.gen(function* () {
       const publish = yield* EventLogApi.makeClient(ProfileProviderEventLogSchema)
       yield* publish("ProfileCreated", {
@@ -138,7 +151,7 @@ test("collectReplayEvents filters journal entries by profile and revision range"
       Effect.scoped,
       Effect.provide(layer),
       Effect.orDie
-    ) as unknown as Effect.Effect<ReadonlyArray<{ readonly _tag: string; readonly revision: number; readonly profileId: string }>, never, never>
+    )
   )
 
   expect(events.map((event) => ({

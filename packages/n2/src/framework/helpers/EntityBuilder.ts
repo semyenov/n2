@@ -27,6 +27,12 @@ type PayloadFieldsOf<Command extends CommandDefinition<Tagged>> =
 type PayloadTypeOf<Command extends CommandDefinition<Tagged>> =
   CommandPayloadTypeOf<Command>
 
+type AnyCommandDefinition = CommandDefinition<Tagged>
+
+type RpcTupleFromCommands<Commands extends ReadonlyArray<AnyCommandDefinition>> = {
+  readonly [K in keyof Commands]: RpcFromCommandDefinition<Commands[K]>
+}
+
 type RpcFromCommandDefinition<Command extends CommandDefinition<Tagged>> =
   CommandInfoOf<Command> extends {
     readonly tag: infer Tag extends string
@@ -85,7 +91,7 @@ const makeRpcFromFields = <
  * @example
  * ```ts
  * import { Entity, ClusterSchema } from "@effect/cluster"
- * import * as N2 from "n2/framework/helpers"
+ * import * as N2 from "@semyenov/n2/framework/helpers"
  *
  * const OrderEntity = Entity.make("Order", [
  *   N2.rpcFromCommand(CreateOrder, (p) => p.orderId),
@@ -117,4 +123,43 @@ export const rpcFromCommand = <
     primaryKey
   )
 
-export type { PayloadFieldsOf, PayloadTypeOf, RpcFromCommandDefinition, RpcPrimaryKeyOf }
+function buildRpcTuple<
+  Head extends AnyCommandDefinition,
+  const Tail extends ReadonlyArray<AnyCommandDefinition>
+>(
+  primaryKey: (payload: PayloadTypeOf<Head | Tail[number]>) => string,
+  head: Head,
+  ...tail: Tail
+): readonly [RpcFromCommandDefinition<Head>, ...RpcTupleFromCommands<Tail>]
+function buildRpcTuple(
+  primaryKey: (payload: Record<string, unknown>) => string,
+  head: AnyCommandDefinition,
+  ...tail: ReadonlyArray<AnyCommandDefinition>
+): ReadonlyArray<Rpc.Any> {
+  const rpc = rpcFromCommand(head, primaryKey)
+  const [nextHead, ...nextTail] = tail
+
+  if (nextHead === undefined) {
+    return [rpc]
+  }
+
+  return [rpc, ...buildRpcTuple(primaryKey, nextHead, ...nextTail)]
+}
+
+export const rpcListFromCommandDefinitions = <
+  Head extends AnyCommandDefinition,
+  const Tail extends ReadonlyArray<AnyCommandDefinition>
+>(
+  primaryKey: (payload: PayloadTypeOf<Head | Tail[number]>) => string,
+  head: Head,
+  ...tail: Tail
+): readonly [RpcFromCommandDefinition<Head>, ...RpcTupleFromCommands<Tail>] =>
+  buildRpcTuple(primaryKey, head, ...tail)
+
+export type {
+  PayloadFieldsOf,
+  PayloadTypeOf,
+  RpcFromCommandDefinition,
+  RpcPrimaryKeyOf,
+  RpcTupleFromCommands
+}

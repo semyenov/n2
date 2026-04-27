@@ -94,9 +94,10 @@ EventGroup.empty.add({
 
 ## Infrastructure helpers
 
-Preferred package imports are `n2/helpers`, `n2/domain`, `n2/testing`, and
-`n2/adapters/http`. Legacy documented paths such as `n2/src/main` and
-`n2/framework/helpers` remain exported for compatibility.
+Preferred package imports are `@semyenov/n2/helpers`, `@semyenov/n2/domain`,
+`@semyenov/n2/testing`, and `@semyenov/n2/adapters/http`. Legacy documented
+paths such as `@semyenov/n2/src/main` and `@semyenov/n2/framework/helpers`
+remain exported for compatibility.
 
 ### `makeSnapshotService({ table, stateSchema, idColumn? })`
 

@@ -17,7 +17,7 @@
  */
 import * as DateTime from "effect/DateTime"
 import * as Effect from "effect/Effect"
-import * as N2 from "n2/helpers"
+import * as N2 from "@semyenov/n2/helpers"
 import {
   type ProfileCommand,
   type ProfileEvent,

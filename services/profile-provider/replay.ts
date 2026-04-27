@@ -5,7 +5,7 @@ import { BunRuntime } from "@effect/platform-bun"
 import * as EventJournalApi from "@effect/experimental/EventJournal"
 import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { PgClient } from "@effect/sql-pg"
-import { makeEventDecoder, makeReplayProgram, makeReplayTool, parseReplayOptions, type ReplayOptions } from "n2/helpers"
+import { makeEventDecoder, makeReplayProgram, makeReplayTool, parseReplayOptions, type ReplayOptions } from "@semyenov/n2/helpers"
 import { ProfileProviderClickhouseBootstrapLayer, resetProfileProviderClickhouseTables } from "./clickhouse-schema.js"
 import { ProfileProviderClickhouseLayer } from "./clickhouse.js"
 import {

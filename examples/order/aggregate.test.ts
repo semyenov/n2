@@ -94,16 +94,22 @@ const makeTestLayers = () => {
 const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
   Effect.runPromise(effect)
 
-// Integration tests — scoped client + provided handlers layer.
-const runWith = <A>(
-  handlersLayer: Layer.Layer<any, any, never>,
-  program: Effect.Effect<A, any, any>
+const runProvided = <A, E, R>(
+  handlersLayer: Layer.Layer<never, never, never>,
+  program: Effect.Effect<A, E, R>
 ): Promise<A> =>
   Effect.runPromise(
-    Effect.scoped(program).pipe(
-      Effect.provide(handlersLayer)
-    ) as Effect.Effect<A, never, never>
+    // The integration test layer fully provides RpcTest handlers and Scope, but
+    // the generic program/layer relationship is assembled dynamically here.
+    Effect.provide(Effect.scoped(program), handlersLayer) as unknown as Effect.Effect<A, E, never>
   )
+
+// Integration tests — scoped client + provided handlers layer.
+const runWith = <A, E, R>(
+  handlersLayer: Layer.Layer<never, never, never>,
+  program: Effect.Effect<A, E, R>
+): Promise<A> =>
+  runProvided(handlersLayer, program)
 
 // ---------------------------------------------------------------------------
 // 1 — Pure aggregate: handle / evolve
@@ -197,7 +203,9 @@ test("handlers: GetOrder for unknown order returns OrderNotFound", async () => {
     const client = yield* RpcTest.makeClient(OrderRpcs)
     const err = yield* client.GetOrder({ orderId: "unknown" }).pipe(Effect.flip)
     expect(err._tag).toBe("OrderNotFound")
-    expect((err as unknown as OrderNotFound).orderId).toBe("unknown")
+    if (err._tag === "OrderNotFound") {
+      expect(err.orderId).toBe("unknown")
+    }
   }))
 })
 

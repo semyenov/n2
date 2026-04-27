@@ -23,6 +23,7 @@
 import * as Effect from "effect/Effect"
 import type * as EventJournalApi from "@effect/experimental/EventJournal"
 import type { EventGroup } from "@effect/experimental"
+import { eventGroupEvents } from "./EventGroupAccess.js"
 
 export interface ReplayOptions {
   readonly entityId?: string
@@ -133,7 +134,7 @@ export const makeReplayTool = <Event extends ReplayEvent, DispatchE, DispatchR>(
   readonly eventGroup: EventGroup.EventGroup.Any
 }) => {
   const eventTags = new Set(
-    Object.keys((config.eventGroup as unknown as { events: Record<string, unknown> }).events)
+    Object.keys(eventGroupEvents(config.eventGroup))
   )
 
   const matchesOptions = (event: Event, options: ReplayOptions): boolean => {

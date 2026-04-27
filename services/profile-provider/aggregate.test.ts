@@ -11,7 +11,7 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { EventLog as EL } from "@effect/experimental"
 import { RpcTest } from "@effect/rpc"
-import { makeTestAggregate } from "n2/helpers"
+import { makeTestAggregate } from "@semyenov/n2/helpers"
 import { handle, initialProfileState } from "./aggregate.js"
 import {
   CreateProfile,
@@ -96,7 +96,7 @@ const NoOpProjection = EL.group(
       .handle("SnapshotPublishedProfile", (_) => Effect.void)
 )
 
-const { makeTestLayers, runWith } = makeTestAggregate<ProfileState>({
+const { makeTestLayers, runWith } = makeTestAggregate({
   eventLogSchema: ProfileProviderEventLogSchema,
   noOpProjection: NoOpProjection,
   handlersLayer: ProfileProviderHandlersRaw,
@@ -105,6 +105,20 @@ const { makeTestLayers, runWith } = makeTestAggregate<ProfileState>({
 
 const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
   Effect.runPromise(effect)
+
+const expectEvent = <
+  Event extends { readonly _tag: string },
+  Tag extends Event["_tag"]
+>(
+  events: ReadonlyArray<Event>,
+  tag: Tag
+): Extract<Event, { readonly _tag: Tag }> => {
+  const event = events.find((candidate): candidate is Extract<Event, { readonly _tag: Tag }> =>
+    candidate._tag === tag
+  )
+  expect(event).toBeDefined()
+  return event!
+}
 
 test("CreateProfile initializes draft state and metadata revisions", async () => {
   const profileId = makeProfileId(1)
@@ -515,7 +529,9 @@ test("handlers: GetProfile for unknown profile returns ProfileNotFound", async (
     const client = yield* RpcTest.makeClient(ProfileProviderRpcs)
     const err = yield* client.GetProfile({ profileId }).pipe(Effect.flip)
     expect(err._tag).toBe("ProfileNotFound")
-    expect((err as unknown as ProfileNotFound).profileId).toBe(profileId)
+    if (err._tag === "ProfileNotFound") {
+      expect(err.profileId).toBe(profileId)
+    }
   }))
 })
 
@@ -1069,7 +1085,7 @@ test("CreateProfile emits MetaDataCreated with scope 'aggregate'", async () => {
     summary: "init",
     sources: []
   })))
-  const metadata = events.find((e) => e._tag === "MetaDataCreated") as any
+  const metadata = expectEvent(events, "MetaDataCreated")
   expect(metadata.scope).toBe("aggregate")
   expect(metadata.scopeId).toBe(profileId)
   expect(metadata.metadataJson).toBe("{\"channel\":\"test\"}")
@@ -1087,7 +1103,7 @@ test("MergeProfileData emits MetaDataCreated with scope 'aggregate'", async () =
     maskedProfileJson: makeProfile(profileId, "Singer"), metadataJson: "{\"merged\":true}",
     piiStorageKey: "", piiJson: "", piiJurisdiction: "", actorId: "a", summary: "merge", sources: []
   })))
-  const metadata = events.find((e) => e._tag === "MetaDataCreated") as any
+  const metadata = expectEvent(events, "MetaDataCreated")
   expect(metadata.scope).toBe("aggregate")
   expect(metadata.scopeId).toBe(profileId)
 })
@@ -1104,7 +1120,7 @@ test("ForkProfileBranch emits MetaDataCreated with scope 'branch'", async () => 
     baseRevision: s1.revision, baseSnapshotId: "", metadataJson: "{\"fork\":true}",
     schemaVersion: "1.0", actorId: "a", summary: "fork"
   })))
-  const metadata = events.find((e) => e._tag === "MetaDataCreated") as any
+  const metadata = expectEvent(events, "MetaDataCreated")
   expect(metadata.scope).toBe("branch")
   expect(metadata.scopeId).toBe("casting")
 })
@@ -1121,7 +1137,7 @@ test("CreateProfileSnapshot emits MetaDataCreated with scope 'snapshot'", async 
     schemaVersion: "1.0", profileJson: makeProfile(profileId, "Actor"), metadataJson: "{\"snap\":true}",
     piiStorageKey: "", piiJson: "", piiJurisdiction: "", actorId: "a", summary: "snap"
   })))
-  const metadata = events.find((e) => e._tag === "MetaDataCreated") as any
+  const metadata = expectEvent(events, "MetaDataCreated")
   expect(metadata.scope).toBe("snapshot")
   expect(metadata.scopeId).toBe("snap-scope")
 })
@@ -1142,7 +1158,7 @@ test("PublishProfileSnapshot emits MetaDataCreated with scope 'publish'", async 
     profileId, snapshotId: "snap-pub", strategyJson: "{\"segment\":\"A\"}",
     metadataJson: "{\"publish\":true}", schemaVersion: "1.0", actorId: "a"
   })))
-  const metadata = events.find((e) => e._tag === "MetaDataCreated") as any
+  const metadata = expectEvent(events, "MetaDataCreated")
   expect(metadata.scope).toBe("publish")
   expect(metadata.scopeId).toBe("snap-pub")
 })
@@ -1378,7 +1394,7 @@ test("CreateProfile emits PersonalDataExtracted with scope 'aggregate'", async (
     piiStorageKey: "pii/key", piiJson: "{\"email\":\"x\"}", piiJurisdiction: "US",
     actorId: "a", summary: "init", sources: []
   })))
-  const pii = events.find((e) => e._tag === "PersonalDataExtracted") as any
+  const pii = expectEvent(events, "PersonalDataExtracted")
   expect(pii.scope).toBe("aggregate")
   expect(pii.scopeId).toBe(profileId)
   expect(pii.jurisdiction).toBe("US")
@@ -1397,7 +1413,7 @@ test("CreateProfileSnapshot emits PersonalDataExtracted with scope 'snapshot'", 
     piiStorageKey: "pii/snap-key", piiJson: "{\"ssn\":\"x\"}", piiJurisdiction: "DE",
     actorId: "a", summary: "snap"
   })))
-  const pii = events.find((e) => e._tag === "PersonalDataExtracted") as any
+  const pii = expectEvent(events, "PersonalDataExtracted")
   expect(pii.scope).toBe("snapshot")
   expect(pii.scopeId).toBe("snap-pii-scope")
   expect(pii.jurisdiction).toBe("DE")
