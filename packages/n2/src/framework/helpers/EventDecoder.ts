@@ -20,6 +20,9 @@
  *
  * @example With migrations
  * ```ts
+ * // Migration runs after raw MsgPack decoding and before current-schema
+ * // validation. The migration receives the stored historical payload and must
+ * // return a value accepted by the current event payload schema.
  * const decodeEvent = makeEventDecoder(MyEventGroup, {
  *   OrderCreated, ItemAdded
  * }, {
@@ -33,12 +36,22 @@ import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import type { EventGroup } from "@effect/experimental"
 import type * as EventJournalApi from "@effect/experimental/EventJournal"
-import { eventGroupPayloadSchemas } from "./EventGroupAccess.js"
+import * as MsgPack from "@effect/platform/MsgPack"
+import {
+  eventGroupPayloadSchemas,
+  eventGroupPayloadValueSchemas
+} from "./EventGroupAccess.js"
 
 type Tagged = { readonly _tag: string }
 
-/** Per-event migration function. Transforms a raw payload before Schema decoding. */
+/** Per-event migration function. Receives the raw unpacked historical payload
+ *  and returns a payload that must validate against the current event schema. */
 type EventMigration = (payload: unknown) => unknown
+type DecodePayload = (payload: unknown) => Effect.Effect<unknown, unknown, never>
+type EventDecoders = {
+  readonly msgPack: DecodePayload
+  readonly payload: DecodePayload
+}
 
 /**
  * Creates a decoder function that converts EventJournal entries into typed domain events.
@@ -59,23 +72,29 @@ export const makeEventDecoder = <Event extends Tagged>(
     readonly migrations?: { readonly [tag: string]: EventMigration }
   }
 ) => {
-  const events = eventGroupPayloadSchemas(eventGroup)
-  const decoders = new Map<string, (payload: unknown) => Effect.Effect<unknown, unknown, never>>()
+  const msgPackPayloadSchemas = eventGroupPayloadSchemas(eventGroup)
+  const payloadValueSchemas = eventGroupPayloadValueSchemas(eventGroup)
+  const decoders = new Map<string, EventDecoders>()
+  const decodeRawPayload = Schema.decodeUnknown(MsgPack.schema(Schema.Unknown))
   const migrations = options?.migrations ?? {}
 
-  for (const [tag, schema] of Object.entries(events)) {
-    if (schema) {
+  for (const [tag, msgPackSchema] of Object.entries(msgPackPayloadSchemas)) {
+    const payloadSchema = payloadValueSchemas[tag]
+    if (msgPackSchema && payloadSchema) {
       decoders.set(
         tag,
-        Schema.decodeUnknown(schema as Schema.Schema<unknown, unknown, never>) as (payload: unknown) => Effect.Effect<unknown, unknown, never>
+        {
+          msgPack: Schema.decodeUnknown(msgPackSchema as Schema.Schema<unknown, unknown, never>) as DecodePayload,
+          payload: Schema.decodeUnknown(payloadSchema as Schema.Schema<unknown, unknown, never>) as DecodePayload
+        }
       )
     }
   }
 
   return (entry: EventJournalApi.Entry): Effect.Effect<Event, Error> => {
     const tag = entry.event
-    const decoder = decoders.get(tag)
-    if (!decoder) {
+    const decoderSet = decoders.get(tag)
+    if (!decoderSet) {
       return Effect.fail(new Error(`Unsupported event: ${tag}`))
     }
     const Ctor = constructors[tag]
@@ -83,9 +102,15 @@ export const makeEventDecoder = <Event extends Tagged>(
       return Effect.fail(new Error(`No constructor for event: ${tag}`))
     }
     const migrate = migrations[tag]
-    const payload = migrate ? migrate(entry.payload) : entry.payload
-    return decoder(payload).pipe(
-      Effect.map((decoded) => new Ctor(decoded as never)),
+    const decodePayload = migrate
+      ? decodeRawPayload(entry.payload).pipe(
+        Effect.map(migrate),
+        Effect.flatMap(decoderSet.payload)
+      )
+      : decoderSet.msgPack(entry.payload)
+
+    return decodePayload.pipe(
+      Effect.map((payload) => new Ctor(payload as never)),
       Effect.mapError((e) => new Error(`Failed to decode ${tag}: ${String(e)}`))
     )
   }

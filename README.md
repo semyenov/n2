@@ -75,6 +75,7 @@ const OrderHandlers = Order.toStatefulRpcHandlers(OrderRpcs, {
 - **[Framework API](docs/framework-api.md)** — complete reference for all helpers
 - **[Patterns](docs/patterns.md)** — projections, outbox, workflows, replay
 - **[Examples](docs/examples.md)** — order and profiler walkthroughs
+- **[Observability](docs/observability.md)** — local OpenTelemetry setup
 
 ## Examples
 

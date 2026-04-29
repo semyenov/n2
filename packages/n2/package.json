@@ -47,14 +47,15 @@
     "./src/adapters/http/*.js": "./src/adapters/http/*.ts"
   },
   "dependencies": {
-    "effect": "^3.21.0",
     "@effect/cluster": "^0.58.0",
     "@effect/experimental": "^0.60.0",
+    "@effect/opentelemetry": "^0.63.0",
     "@effect/platform": "^0.96.0",
     "@effect/platform-bun": "^0.89.0",
     "@effect/rpc": "^0.75.0",
     "@effect/sql": "^0.51.0",
-    "@effect/workflow": "^0.18.0"
+    "@effect/workflow": "^0.18.0",
+    "effect": "^3.21.0"
   },
   "peerDependencies": {
     "@effect/sql-clickhouse": "^0.48.0",

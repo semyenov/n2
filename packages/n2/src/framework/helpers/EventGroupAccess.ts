@@ -26,3 +26,13 @@ export const eventGroupPayloadSchemas = (
   }
   return schemas
 }
+
+export const eventGroupPayloadValueSchemas = (
+  eventGroup: EventGroup.EventGroup.Any
+): Readonly<Record<string, Schema.Schema.All | undefined>> => {
+  const schemas: Record<string, Schema.Schema.All | undefined> = {}
+  for (const [tag, event] of Object.entries(eventGroupEvents(eventGroup))) {
+    schemas[tag] = event?.payload
+  }
+  return schemas
+}

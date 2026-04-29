@@ -24,7 +24,7 @@ import { WorkflowEngine } from "@effect/workflow"
 import { OrderFulfillmentHandlers } from "./workflows.js"
 import { OrderProjectionLayer } from "./projector.js"
 import { OrderEventLogSchema } from "./events.js"
-import { OrderSnapshots } from "./snapshots.js"
+import { OrderSnapshotsLive } from "./snapshots.js"
 
 // ---------------------------------------------------------------------------
 // Shared base services
@@ -88,7 +88,7 @@ export const InfrastructureLayer = Layer.mergeAll(
   identityLayer,      // R: never    — provides Identity
   WorkflowLayer,      // R: never    — provides WorkflowEngine
   EventLogLayer,      // R: SqlClient — provides EventLog
-  OrderSnapshots.Default  // R: SqlClient — provides OrderSnapshots
+  OrderSnapshotsLive  // R: SqlClient — provides OrderSnapshots
 )
 
 // Cluster mode: cluster-backed workflow engine, SQL event journal, EventLog, projections.
@@ -98,5 +98,5 @@ export const ClusterInfrastructureLayer = Layer.mergeAll(
   identityLayer,
   ClusterWorkflowLayer,
   EventLogLayer,
-  OrderSnapshots.Default
+  OrderSnapshotsLive
 )

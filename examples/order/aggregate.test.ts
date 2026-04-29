@@ -66,14 +66,11 @@ const testEventLogLayer = EventLogApi.layer(OrderEventLogSchema).pipe(
 const makeTestLayers = () => {
   const snapshotStore = new Map<string, SnapshotEntry>()
 
-  const snapshotsLayer = Layer.succeed(
-    OrderSnapshots,
-    OrderSnapshots.make({
-      load:  (orderId) => Effect.succeed(Option.fromNullable(snapshotStore.get(orderId))),
-      save:  (orderId, state, revision) =>
-        Effect.sync(() => { snapshotStore.set(orderId, { state, revision }) })
-    })
-  )
+  const snapshotsLayer = Layer.succeed(OrderSnapshots, {
+    load:  (orderId) => Effect.succeed(Option.fromNullable(snapshotStore.get(orderId))),
+    save:  (orderId, state, revision) =>
+      Effect.sync(() => { snapshotStore.set(orderId, { state, revision }) })
+  })
 
   const infraLayer = Layer.mergeAll(
     testJournalLayer,

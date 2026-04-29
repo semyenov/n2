@@ -18,3 +18,18 @@ test("makeReplayInfrastructureLayer composes empty inputs into a Layer", () => {
   type _Err = Layer.Layer.Error<typeof layer>
   expect(layer).toBeDefined()
 })
+
+test("makeReplayInfrastructureLayer accepts service-specific event journal tables", () => {
+  const layer = makeReplayInfrastructureLayer({
+    eventJournal: {
+      entryTable: "service_event_journal",
+      remotesTable: "service_event_remotes"
+    },
+    clickhouseLayer: Layer.empty,
+    clickhouseBootstrapLayer: Layer.empty,
+    projectionStoreLayer: Layer.empty,
+    sqlLayer: Layer.empty as never
+  })
+
+  expect(layer).toBeDefined()
+})

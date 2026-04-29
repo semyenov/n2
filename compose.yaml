@@ -1,0 +1,201 @@
+services:
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+      GF_PLUGINS_PREINSTALL_AUTO_UPDATE: "false"
+    ports:
+      - "${GRAFANA_PORT:-3333}:3000"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./observability/grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      prometheus:
+        condition: service_started
+      tempo:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  prometheus:
+    image: prom/prometheus:latest
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-remote-write-receiver"
+      - "--enable-feature=exemplar-storage"
+    ports:
+      - "${PROMETHEUS_PORT:-9091}:9090"
+    volumes:
+      - prometheus-data:/prometheus
+      - ./observability/prometheus.yaml:/etc/prometheus/prometheus.yml:ro
+    depends_on:
+      otel-collector:
+        condition: service_started
+
+  tempo:
+    image: grafana/tempo:2.9.2
+    user: "0:0"
+    command: ["-config.file=/etc/tempo.yaml"]
+    ports:
+      - "${TEMPO_PORT:-3200}:3200"
+    volumes:
+      - tempo-data:/tmp/tempo
+      - ./observability/tempo.yaml:/etc/tempo.yaml:ro
+
+  loki:
+    image: grafana/loki:latest
+    command: ["-config.file=/etc/loki/local-config.yaml"]
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - loki-data:/loki
+      - ./observability/loki.yaml:/etc/loki/local-config.yaml:ro
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    command: ["--config=/etc/otel-collector.yaml"]
+    ports:
+      - "${OTEL_GRPC_PORT:-4317}:4317"
+      - "${OTEL_HTTP_PORT:-4318}:4318"
+      - "${OTEL_PROMETHEUS_PORT:-8889}:8889"
+    volumes:
+      - ./observability/otel-collector.yaml:/etc/otel-collector.yaml:ro
+    depends_on:
+      tempo:
+        condition: service_started
+      loki:
+        condition: service_started
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: n2
+      POSTGRES_USER: n2
+      POSTGRES_PASSWORD: n2
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./observability/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n2 -d n2"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:latest-alpine
+    environment:
+      CLICKHOUSE_DB: n2
+      CLICKHOUSE_USER: n2
+      CLICKHOUSE_PASSWORD: n2
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+    ports:
+      - "${CLICKHOUSE_HTTP_PORT:-8123}:8123"
+      - "${CLICKHOUSE_NATIVE_PORT:-9000}:9000"
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - clickhouse-logs:/var/log/clickhouse-server
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  clickhouse-ui:
+    image: ghcr.io/caioricciuti/ch-ui:latest
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CONNECTION_NAME: N2 Local ClickHouse
+      APP_URL: "http://localhost:${CLICKHOUSE_UI_PORT:-3488}"
+    ports:
+      - "${CLICKHOUSE_UI_PORT:-3488}:3488"
+    volumes:
+      - ch-ui-data:/app/data
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+
+  profile-provider:
+    build:
+      context: .
+      dockerfile: Dockerfile.services
+    environment:
+      DATABASE_URL: postgres://n2:n2@postgres:5432/n2
+      CLICKHOUSE_URL: http://n2:n2@clickhouse:8123
+      CLICKHOUSE_DATABASE: n2
+      DEPLOYMENT_ENVIRONMENT: local
+      OBSERVABILITY_ENABLED: true
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PORT: 4100
+    ports:
+      - "${PROFILE_PROVIDER_PORT:-4100}:4100"
+    command: ["bun", "services/profile-provider/src/server.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4100/health'); if (!r.ok) process.exit(1)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  request-provider:
+    build:
+      context: .
+      dockerfile: Dockerfile.services
+    environment:
+      DATABASE_URL: postgres://n2:n2@postgres:5432/n2
+      CLICKHOUSE_URL: http://n2:n2@clickhouse:8123
+      CLICKHOUSE_DATABASE: n2
+      DEPLOYMENT_ENVIRONMENT: local
+      OBSERVABILITY_ENABLED: true
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PORT: 4110
+    ports:
+      - "${REQUEST_PROVIDER_PORT:-4110}:4110"
+    command: ["bun", "services/request-provider/src/server.ts"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      otel-collector:
+        condition: service_started
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r = await fetch('http://127.0.0.1:4110/health'); if (!r.ok) process.exit(1)"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+volumes:
+  grafana-data:
+  prometheus-data:
+  tempo-data:
+  loki-data:
+  postgres-data:
+  clickhouse-data:
+  clickhouse-logs:
+  ch-ui-data:

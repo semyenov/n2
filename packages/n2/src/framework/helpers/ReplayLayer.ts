@@ -1,7 +1,10 @@
 import * as Config from "effect/Config"
 import * as Layer from "effect/Layer"
-import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { PgClient } from "@effect/sql-pg"
+import {
+  makeSqlEventJournalLayer,
+  type EventJournalTableOptions
+} from "./EventJournalLayer.js"
 
 export interface ReplayInfrastructureConfig<
   CHO, CHE, CHR,
@@ -12,6 +15,7 @@ export interface ReplayInfrastructureConfig<
   readonly clickhouseBootstrapLayer: Layer.Layer<CHBO, CHBE, CHBR>
   readonly projectionStoreLayer: Layer.Layer<PSO, PSE, PSR>
   readonly sqlLayer?: PgSqlLayer
+  readonly eventJournal?: EventJournalTableOptions
 }
 
 const defaultSqlLayer = () =>
@@ -41,7 +45,7 @@ export const makeReplayInfrastructureLayer = <
   )
 
   return Layer.mergeAll(
-    Layer.provide(SqlEventJournal.layer(), sqlLayer),
+    Layer.provide(makeSqlEventJournalLayer(config.eventJournal), sqlLayer),
     clickhouseReadyLayer,
     Layer.provide(config.projectionStoreLayer, clickhouseReadyLayer)
   )

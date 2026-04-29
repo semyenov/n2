@@ -8,9 +8,11 @@ import type * as RpcGroup from "@effect/rpc/RpcGroup"
 import {
   makeClusterShardingLayer,
   makeHealthRoute,
+  makeHttpTraceMiddleware,
   makePgSqlLayer,
   makeRpcHttpRoute
 } from "./Runtime.js"
+import { makeObservabilityLayer, ObservabilityDisabled, type ObservabilityOptions } from "./Observability.js"
 
 type PgSqlLayer = ReturnType<typeof makePgSqlLayer>
 
@@ -35,6 +37,7 @@ export interface ClusterEntrypointConfig<
   readonly banner: ReadonlyArray<string>
   readonly apiPortConfig?: Config.Config<number>
   readonly sqlLayer?: PgSqlLayer
+  readonly observability?: ObservabilityOptions
 }
 
 /**
@@ -55,6 +58,9 @@ export const makeClusterEntrypoint = <
   const apiPortConfig = config.apiPortConfig
     ?? Config.integer("API_PORT").pipe(Config.withDefault(config.defaultApiPort))
   const sqlLayer = config.sqlLayer ?? makePgSqlLayer({ minConnections: 4 })
+  const ObservabilityLayer = config.observability === undefined
+    ? ObservabilityDisabled
+    : makeObservabilityLayer(config.observability)
 
   const RpcRoute = makeRpcHttpRoute({
     group: config.proxyGroup,
@@ -82,10 +88,18 @@ export const makeClusterEntrypoint = <
   })
 
   return main.pipe(
-    Effect.provide(Layer.mergeAll(
-      HttpLayerRouter.serve(Layer.mergeAll(RpcRoute, HealthRoute)),
-      EntitiesLayer
-    )),
+    Effect.provide(
+      Layer.provideMerge(
+        Layer.mergeAll(
+          HttpLayerRouter.serve(
+            Layer.mergeAll(RpcRoute, HealthRoute),
+            { middleware: makeHttpTraceMiddleware }
+          ),
+          EntitiesLayer
+        ),
+        ObservabilityLayer
+      )
+    ),
     Effect.provide(
       Layer.mergeAll(
         BunHttpServer.layerConfig(

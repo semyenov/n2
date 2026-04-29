@@ -1,6 +1,9 @@
 {
   "private": true,
   "workspaces": ["packages/*", "services/*", "examples/*"],
+  "scripts": {
+    "test:services": "bun scripts/test-services.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest",
     "typescript": "^5"

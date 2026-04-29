@@ -5,7 +5,8 @@ import { BunHttpServer } from "@effect/platform-bun"
 import { HttpLayerRouter } from "@effect/platform"
 import type * as Rpc from "@effect/rpc/Rpc"
 import type * as RpcGroup from "@effect/rpc/RpcGroup"
-import { makeHealthRoute, makePgSqlLayer, makeRpcHttpRoute } from "./Runtime.js"
+import { makeHealthRoute, makeHttpTraceMiddleware, makePgSqlLayer, makeRpcHttpRoute } from "./Runtime.js"
+import { makeObservabilityLayer, ObservabilityDisabled, type ObservabilityOptions } from "./Observability.js"
 
 type PgSqlLayer = ReturnType<typeof makePgSqlLayer>
 
@@ -23,6 +24,7 @@ export interface ServerEntrypointConfig<Rpcs extends Rpc.Any, HE, HR, MO, ME, MR
   readonly banner: ReadonlyArray<string>
   readonly portConfig?: Config.Config<number>
   readonly sqlLayer?: PgSqlLayer
+  readonly observability?: ObservabilityOptions
 }
 
 /**
@@ -36,6 +38,9 @@ export const makeServerEntrypoint = <Rpcs extends Rpc.Any, HE, HR, MO, ME, MR, I
 ) => {
   const portConfig = config.portConfig ?? Config.integer("PORT").pipe(Config.withDefault(config.defaultPort))
   const sqlLayer = config.sqlLayer ?? makePgSqlLayer()
+  const ObservabilityLayer = config.observability === undefined
+    ? ObservabilityDisabled
+    : makeObservabilityLayer(config.observability)
 
   const RpcRoute = makeRpcHttpRoute({
     group: config.group,
@@ -46,7 +51,8 @@ export const makeServerEntrypoint = <Rpcs extends Rpc.Any, HE, HR, MO, ME, MR, I
   const HealthRoute = makeHealthRoute()
 
   const ServerLayer = HttpLayerRouter.serve(
-    Layer.mergeAll(RpcRoute, HealthRoute)
+    Layer.mergeAll(RpcRoute, HealthRoute),
+    { middleware: makeHttpTraceMiddleware }
   ).pipe(
     Layer.provide(BunHttpServer.layerConfig(
       Config.map(portConfig, (port) => ({ port }))
@@ -64,5 +70,8 @@ export const makeServerEntrypoint = <Rpcs extends Rpc.Any, HE, HR, MO, ME, MR, I
     return yield* Effect.never
   })
 
-  return main.pipe(Effect.provide(ServerLayer), Effect.orDie)
+  return main.pipe(
+    Effect.provide(Layer.provideMerge(ServerLayer, ObservabilityLayer)),
+    Effect.orDie
+  )
 }

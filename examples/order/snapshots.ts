@@ -6,19 +6,21 @@
  * every SNAPSHOT_EVERY events; on startup the latest snapshot is loaded and
  * only events after it would need to be replayed.
  *
- * Serialization:
- *   OrderState uses Option<T> and DateTime.Utc — not directly JSON-friendly.
- *   encodeState/decodeState convert to/from a plain JSON-serialisable object:
- *     Option<string>      → string | null
- *     Option<DateTime>    → ISO string | null   (via Schema.DateTimeUtc codec)
- *     ReadonlyArray<LineItem> → plain object array
+ * Implementation: delegates to the framework's `makeSnapshotService` helper
+ * with a `Schema.transform` codec that converts between OrderState (which uses
+ * `Option`/`DateTime` runtime types) and a JSON-friendly encoded form using
+ * `Schema.OptionFromNullOr` and `Schema.DateTimeUtc`. Per CLAUDE.md, generic
+ * services like `SnapshotService<State>` use the `Context.Tag + makeLive`
+ * factory pattern (Effect.Service doesn't model type parameters cleanly).
  */
-import * as Effect from "effect/Effect"
-import * as Option from "effect/Option"
+import * as Context from "effect/Context"
 import * as Schema from "effect/Schema"
-import { SqlClient } from "@effect/sql/SqlClient"
-import type { SqlError } from "@effect/sql/SqlError"
-import { LineItem, OrderState, type OrderStatus } from "./contracts.js"
+import {
+  makeSnapshotService,
+  type SnapshotEntry as SnapshotEntryGeneric,
+  type SnapshotService
+} from "@semyenov/n2/framework/helpers"
+import { LineItem, OrderState, OrderStatus } from "./contracts.js"
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -28,81 +30,45 @@ import { LineItem, OrderState, type OrderStatus } from "./contracts.js"
 export const SNAPSHOT_EVERY = 50
 
 // ---------------------------------------------------------------------------
-// Serialization
+// Codec
+//
+// OrderState's runtime form uses `OptionFromSelf` (Option<T> on both sides),
+// so we transform via a JSON-friendly intermediate that uses
+// `OptionFromNullOr` (Option<T> ↔ T | null) and `DateTimeUtc` (DateTime ↔ ISO).
 // ---------------------------------------------------------------------------
 
-type SnapshotJson = {
-  status: string
-  orderId: string | null
-  customerId: string | null
-  items: Array<{ sku: string; quantity: number; price: number }>
-  totalAmount: number
-  cancelledAt: string | null
-}
+const OrderStateJson = Schema.Struct({
+  status:      OrderStatus,
+  orderId:     Schema.OptionFromNullOr(Schema.String),
+  customerId:  Schema.OptionFromNullOr(Schema.String),
+  items:       Schema.Array(LineItem),
+  totalAmount: Schema.Number,
+  cancelledAt: Schema.OptionFromNullOr(Schema.DateTimeUtc)
+})
 
-const encodeDateTime = Schema.encodeSync(Schema.DateTimeUtc)
-const decodeDateTime = Schema.decodeSync(Schema.DateTimeUtc)
-
-const encodeState = (state: OrderState): string =>
-  JSON.stringify({
-    status:      state.status,
-    orderId:     Option.getOrNull(state.orderId),
-    customerId:  Option.getOrNull(state.customerId),
-    items:       state.items.map(i => ({ sku: i.sku, quantity: i.quantity, price: i.price })),
-    totalAmount: state.totalAmount,
-    cancelledAt: Option.match(state.cancelledAt, {
-      onNone: () => null,
-      onSome: encodeDateTime
-    })
-  } satisfies SnapshotJson)
-
-const decodeState = (json: string): OrderState => {
-  const d = JSON.parse(json) as SnapshotJson
-  return new OrderState({
-    status:      d.status as OrderStatus,
-    orderId:     Option.fromNullable(d.orderId),
-    customerId:  Option.fromNullable(d.customerId),
-    items:       d.items.map(i => new LineItem(i)),
-    totalAmount: d.totalAmount,
-    cancelledAt: d.cancelledAt !== null
-      ? Option.some(decodeDateTime(d.cancelledAt))
-      : Option.none()
-  })
-}
+const OrderStateCodec = Schema.transform(
+  OrderStateJson,
+  Schema.typeSchema(OrderState),
+  {
+    strict: true,
+    decode: (json) => new OrderState(json),
+    encode: (state) => state
+  }
+)
 
 // ---------------------------------------------------------------------------
 // Service
 // ---------------------------------------------------------------------------
 
-export type SnapshotEntry = { readonly state: OrderState; readonly revision: number }
+export type SnapshotEntry = SnapshotEntryGeneric<OrderState>
 
-export class OrderSnapshots extends Effect.Service<OrderSnapshots>()("OrderSnapshots", {
-  effect: Effect.gen(function* () {
-    const sql = yield* SqlClient
+export class OrderSnapshots extends Context.Tag("OrderSnapshots")<
+  OrderSnapshots,
+  SnapshotService<OrderState>
+>() {}
 
-    const load = (orderId: string): Effect.Effect<Option.Option<SnapshotEntry>, SqlError> =>
-      sql`
-        SELECT state_json, revision
-        FROM order_snapshots
-        WHERE order_id = ${orderId}
-      `.pipe(
-        Effect.map((rows) => {
-          const row = rows[0] as { state_json: string; revision: number } | undefined
-          if (!row) return Option.none<SnapshotEntry>()
-          return Option.some({ state: decodeState(row.state_json), revision: row.revision })
-        })
-      )
-
-    const save = (orderId: string, state: OrderState, revision: number): Effect.Effect<void, SqlError> =>
-      sql`
-        INSERT INTO order_snapshots (order_id, state_json, revision, saved_at)
-        VALUES (${orderId}, ${encodeState(state)}, ${revision}, ${new Date().toISOString()})
-        ON CONFLICT (order_id) DO UPDATE SET
-          state_json = EXCLUDED.state_json,
-          revision   = EXCLUDED.revision,
-          saved_at   = EXCLUDED.saved_at
-      `.pipe(Effect.asVoid)
-
-    return { load, save }
-  })
-}) {}
+export const OrderSnapshotsLive = makeSnapshotService({
+  table: "order_snapshots",
+  stateSchema: OrderStateCodec,
+  idColumn: "order_id"
+}).makeLive(OrderSnapshots)

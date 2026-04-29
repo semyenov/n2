@@ -1,18 +1,24 @@
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Option from "effect/Option"
 import { BunClusterHttp } from "@effect/platform-bun"
 import { ClusterWorkflowEngine } from "@effect/cluster"
+import * as Reactivity from "@effect/experimental/Reactivity"
 import { Identity } from "@effect/experimental/EventLog"
-import { HttpLayerRouter, HttpServerResponse } from "@effect/platform"
+import { HttpLayerRouter, HttpServerRequest, HttpServerResponse } from "@effect/platform"
 import { RpcSerialization, RpcServer } from "@effect/rpc"
 import type * as Rpc from "@effect/rpc/Rpc"
 import type * as RpcGroup from "@effect/rpc/RpcGroup"
 import { Migrator } from "@effect/sql"
-import * as SqlEventJournal from "@effect/sql/SqlEventJournal"
 import { PgClient } from "@effect/sql-pg"
 import { WorkflowEngine } from "@effect/workflow"
 import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
+import {
+  makeSqlEventJournalLayer,
+  type EventJournalTableOptions
+} from "./EventJournalLayer.js"
+import { ObservabilityTracer } from "./Observability.js"
 
 export {
   makeServerEntrypoint,
@@ -29,13 +35,33 @@ export {
   type ReplayInfrastructureConfig
 } from "./ReplayLayer.js"
 
+export {
+  makeSqlEventJournalLayer,
+  type EventJournalTableOptions
+} from "./EventJournalLayer.js"
+
+export {
+  ObservabilityDisabled,
+  ObservabilityTracer,
+  makeObservabilityLayer,
+  type ObservabilityOptions
+} from "./Observability.js"
+
 export type MigrationGlob = Record<string, () => Promise<unknown>>
 
-export const makeMigrationsLayer = (migrations: MigrationGlob) => {
+export interface MigrationsLayerOptions {
+  readonly table?: string
+}
+
+export const makeMigrationsLayer = (
+  migrations: MigrationGlob,
+  options?: MigrationsLayerOptions
+) => {
   const runMigrations = Migrator.make({})
   return Layer.effectDiscard(
     runMigrations({
-      loader: Migrator.fromGlob(migrations)
+      loader: Migrator.fromGlob(migrations),
+      ...(options?.table === undefined ? {} : { table: options.table })
     })
   )
 }
@@ -46,10 +72,12 @@ export const makeConfiguredClickhouseLayer = () =>
       const url = yield* Config.string("CLICKHOUSE_URL")
       const database = yield* Config.string("CLICKHOUSE_DATABASE").pipe(Config.withDefault("default"))
 
-      return ClickhouseClient.layer({
-        url,
-        database
-      })
+      return Layer.scoped(
+        ClickhouseClient.ClickhouseClient,
+        ClickhouseClient.make({ url, database })
+      ).pipe(
+        Layer.provide(Reactivity.layer)
+      )
     })
   )
 
@@ -77,6 +105,25 @@ export const makeHealthRoute = (body: unknown = { status: "ok" }) =>
     "/health",
     HttpServerResponse.json(body)
   )
+
+export const makeHttpTraceMiddleware = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+  Effect.gen(function* () {
+    const request = yield* HttpServerRequest.HttpServerRequest
+    const tracer = yield* ObservabilityTracer
+    const traced = Effect.withSpan(effect, `${request.method} ${request.url}`, {
+      kind: "server",
+      captureStackTrace: false,
+      attributes: {
+        "http.request.method": request.method,
+        "url.path": request.url
+      }
+    })
+
+    return yield* Option.match(tracer, {
+      onNone: () => traced,
+      onSome: (activeTracer) => Effect.withTracer(traced, activeTracer)
+    })
+  })
 
 export const makeRpcHttpRoute = <Rpcs extends Rpc.Any, E = never, R = never>(options: {
   readonly group: RpcGroup.RpcGroup<Rpcs>
@@ -136,6 +183,7 @@ export interface ServiceInfrastructureConfig<
   readonly snapshotsLive: Layer.Layer<SnapshotsOut, SnapshotsErr, SnapshotsReq>
   readonly publishHandlers: Layer.Layer<PublishHandlersOut, PublishHandlersErr, PublishHandlersReq>
   readonly publisherLive: Layer.Layer<PublisherOut, PublisherErr, PublisherReq>
+  readonly eventJournal?: EventJournalTableOptions
 }
 
 export const makeServiceInfrastructureLayers = <
@@ -204,7 +252,7 @@ export const makeServiceInfrastructureLayers = <
   >
 ) => {
   const identityLayer = Layer.succeed(Identity, Identity.makeRandom())
-  const sqlJournalLayer = SqlEventJournal.layer()
+  const sqlJournalLayer = makeSqlEventJournalLayer(config.eventJournal)
   const clickhouseReadyLayer = Layer.merge(
     config.clickhouseLayer,
     Layer.provide(config.clickhouseBootstrapLayer, config.clickhouseLayer)
@@ -226,6 +274,16 @@ export const makeServiceInfrastructureLayers = <
     Layer.merge(projectionStoreLayer, config.outboxLive)
   )
 
+  const OutboxWorkerLayer = Layer.provide(
+    config.outboxWorkerLive,
+    Layer.merge(config.outboxLive, WorkflowLayer)
+  )
+
+  const ClusterOutboxWorkerLayer = Layer.provide(
+    config.outboxWorkerLive,
+    Layer.merge(config.outboxLive, ClusterWorkflowLayer)
+  )
+
   const EventLogLayer = config.eventLogLayer.pipe(
     Layer.provide(projectionLayer),
     Layer.provide(Layer.merge(sqlJournalLayer, identityLayer))
@@ -244,7 +302,7 @@ export const makeServiceInfrastructureLayers = <
       identityLayer,
       WorkflowLayer,
       config.outboxLive,
-      Layer.provide(config.outboxWorkerLive, config.outboxLive),
+      OutboxWorkerLayer,
       EventLogLayer,
       config.snapshotsLive
     ),
@@ -253,7 +311,7 @@ export const makeServiceInfrastructureLayers = <
       identityLayer,
       ClusterWorkflowLayer,
       config.outboxLive,
-      Layer.provide(config.outboxWorkerLive, config.outboxLive),
+      ClusterOutboxWorkerLayer,
       EventLogLayer,
       config.snapshotsLive
     )

@@ -315,7 +315,10 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => {
 
     return Layer.scopedDiscard(
       Effect.forkScoped(
-        loop.pipe(Effect.onInterrupt(() => Effect.logInfo("outbox worker shutting down")))
+        Effect.sleep(idleDelay).pipe(
+          Effect.zipRight(loop),
+          Effect.onInterrupt(() => Effect.logInfo("outbox worker shutting down"))
+        )
       ).pipe(Effect.asVoid)
     )
   }
