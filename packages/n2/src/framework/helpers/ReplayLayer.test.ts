@@ -1,8 +1,8 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Layer from "effect/Layer"
 import { makeReplayInfrastructureLayer } from "./ReplayLayer.js"
 
-test("makeReplayInfrastructureLayer composes empty inputs into a Layer", () => {
+it("makeReplayInfrastructureLayer composes empty inputs into a Layer", () => {
   const layer = makeReplayInfrastructureLayer({
     clickhouseLayer: Layer.empty,
     clickhouseBootstrapLayer: Layer.empty,
@@ -19,7 +19,7 @@ test("makeReplayInfrastructureLayer composes empty inputs into a Layer", () => {
   expect(layer).toBeDefined()
 })
 
-test("makeReplayInfrastructureLayer accepts service-specific event journal tables", () => {
+it("makeReplayInfrastructureLayer accepts service-specific event journal tables", () => {
   const layer = makeReplayInfrastructureLayer({
     eventJournal: {
       entryTable: "service_event_journal",

@@ -2,7 +2,7 @@
  * Behavior tests for `makeEventDecoder` — converts EventJournal entries into
  * typed domain events. Critical to event replay; bugs here corrupt CQRS reads.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Cause from "effect/Cause"
 import * as Effect from "effect/Effect"
 import * as Exit from "effect/Exit"
@@ -71,19 +71,19 @@ const makeRawEntry = (tag: string, payload: unknown): ExpEventJournal.Entry => {
   })
 }
 
-test("makeEventDecoder decodes a valid entry to the matching constructor", async () => {
+it.effect("makeEventDecoder decodes a valid entry to the matching constructor", () => Effect.gen(function* () {
   const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded })
   const entry = makeEntry("OrderCreated", { orderId: "o-1", total: 42 })
 
-  const event = await Effect.runPromise(decode(entry))
+  const event = yield* decode(entry)
 
   expect(event).toBeInstanceOf(OrderCreated)
   expect(event._tag).toBe("OrderCreated")
   expect((event as OrderCreated).orderId).toBe("o-1")
   expect((event as OrderCreated).total).toBe(42)
-})
+}))
 
-test("makeEventDecoder fails with typed Error on unknown tag", async () => {
+it.effect("makeEventDecoder fails with typed Error on unknown tag", () => Effect.gen(function* () {
   const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded })
   const entry = new ExpEventJournal.Entry({
     id: ExpEventJournal.makeEntryId(),
@@ -92,7 +92,7 @@ test("makeEventDecoder fails with typed Error on unknown tag", async () => {
     payload: new Uint8Array()
   })
 
-  const exit = await Effect.runPromiseExit(decode(entry))
+  const exit = yield* Effect.exit(decode(entry))
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) {
     const failure = Cause.failureOption(exit.cause)
@@ -102,14 +102,14 @@ test("makeEventDecoder fails with typed Error on unknown tag", async () => {
       expect((failure.value as Error).message).toContain("Unsupported event")
     }
   }
-})
+}))
 
-test("makeEventDecoder fails with typed Error when constructor is missing", async () => {
+it.effect("makeEventDecoder fails with typed Error when constructor is missing", () => Effect.gen(function* () {
   // Schema for the tag exists in the EventGroup, but no constructor was supplied.
   const decode = makeEventDecoder(TestEventGroup, { OrderCreated })
   const entry = makeEntry("ItemAdded", { orderId: "o-1", sku: "abc", quantity: 1 })
 
-  const exit = await Effect.runPromiseExit(decode(entry))
+  const exit = yield* Effect.exit(decode(entry))
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) {
     const failure = Cause.failureOption(exit.cause)
@@ -118,9 +118,9 @@ test("makeEventDecoder fails with typed Error when constructor is missing", asyn
       expect((failure.value as Error).message).toContain("No constructor for event")
     }
   }
-})
+}))
 
-test("makeEventDecoder migrates historical payloads before current schema validation", async () => {
+it.effect("makeEventDecoder migrates historical payloads before current schema validation", () => Effect.gen(function* () {
   let received: unknown
   const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded }, {
     migrations: {
@@ -133,20 +133,20 @@ test("makeEventDecoder migrates historical payloads before current schema valida
   })
   const entry = makeRawEntry("OrderCreated", { orderId: "o-1", amount: 42 })
 
-  const decoded = await Effect.runPromise(decode(entry))
+  const decoded = yield* decode(entry)
 
   expect(decoded).toBeInstanceOf(OrderCreated)
   expect(received).not.toBeInstanceOf(Uint8Array)
   expect((received as { orderId: string }).orderId).toBe("o-1")
   expect((received as { amount: number }).amount).toBe(42)
   expect((decoded as OrderCreated).total).toBe(42)
-})
+}))
 
-test("makeEventDecoder fails historical payloads without a migration", async () => {
+it.effect("makeEventDecoder fails historical payloads without a migration", () => Effect.gen(function* () {
   const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded })
   const entry = makeRawEntry("OrderCreated", { orderId: "o-1", amount: 42 })
 
-  const exit = await Effect.runPromiseExit(decode(entry))
+  const exit = yield* Effect.exit(decode(entry))
 
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) {
@@ -156,9 +156,9 @@ test("makeEventDecoder fails historical payloads without a migration", async () 
       expect((failure.value as Error).message).toContain("Failed to decode OrderCreated")
     }
   }
-})
+}))
 
-test("makeEventDecoder wraps schema decode failures in a wrapped Error", async () => {
+it.effect("makeEventDecoder wraps schema decode failures in a wrapped Error", () => Effect.gen(function* () {
   const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded })
   // Random non-msgpack bytes will fail the MsgPack decoder.
   const entry = new ExpEventJournal.Entry({
@@ -168,7 +168,7 @@ test("makeEventDecoder wraps schema decode failures in a wrapped Error", async (
     payload: new Uint8Array([0x99, 0x99, 0x99])
   })
 
-  const exit = await Effect.runPromiseExit(decode(entry))
+  const exit = yield* Effect.exit(decode(entry))
   expect(Exit.isFailure(exit)).toBe(true)
   if (Exit.isFailure(exit)) {
     const failure = Cause.failureOption(exit.cause)
@@ -177,4 +177,4 @@ test("makeEventDecoder wraps schema decode failures in a wrapped Error", async (
       expect((failure.value as Error).message).toContain("Failed to decode OrderCreated")
     }
   }
-})
+}))

@@ -302,6 +302,7 @@ export const makeServiceInfrastructureLayers = <
       identityLayer,
       WorkflowLayer,
       config.outboxLive,
+      projectionStoreLayer,
       OutboxWorkerLayer,
       EventLogLayer,
       config.snapshotsLive
@@ -311,6 +312,7 @@ export const makeServiceInfrastructureLayers = <
       identityLayer,
       ClusterWorkflowLayer,
       config.outboxLive,
+      projectionStoreLayer,
       ClusterOutboxWorkerLayer,
       EventLogLayer,
       config.snapshotsLive

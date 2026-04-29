@@ -49,6 +49,7 @@ export {
   type CommandInfoOf,
   type CommandPayloadFieldsOf,
   type CommandPayloadTypeOf,
+  type PersistedCommandTags,
   type CommandSuccessSchemaOf,
   type CommandTagOf,
   type SchemaUnion,
@@ -131,9 +132,11 @@ export {
   standardPublishRetry,
   makeStateOverride,
   makeAfterCommitPublisher,
+  makeWriteThroughAfterCommitPublisher,
   type StateOverrideConfig,
   type StateOverrideContext,
-  type AfterCommitPublisherConfig
+  type AfterCommitPublisherConfig,
+  type WriteThroughAfterCommitPublisherConfig
 } from "./EntityWiring.js"
 
 export {

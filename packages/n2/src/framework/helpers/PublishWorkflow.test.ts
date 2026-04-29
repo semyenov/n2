@@ -10,7 +10,7 @@
  * first try; give-up after exactly one failed attempt) which together cover
  * the publisher dispatch, error catching, and `maxAttempts` cutoff.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -28,73 +28,151 @@ interface TestPublisherShape {
 }
 class TestPublisher extends Context.Tag("TestPublisher")<TestPublisher, TestPublisherShape>() {}
 
-// `wf.start` uses `discard: true` (fire-and-forget). To deterministically
-// observe completion in tests we drive the engine directly with `discard: false`.
 const runWorkflow = (
-  wf: { readonly workflow: unknown; readonly handlers: Layer.Layer<never, never, any> },
-  executionId: string,
+  wf: ReturnType<typeof makePublishWorkflow<TestPublishMessage, TestPublisher>>,
   message: TestPublishMessage,
   publisherLayer: Layer.Layer<TestPublisher, never, never>
 ): Effect.Effect<unknown, never, never> =>
-  Effect.gen(function* () {
-    const engine = yield* WorkflowEngine.WorkflowEngine
-    return yield* engine.execute(wf.workflow as never, {
-      executionId,
-      payload: message as never,
-      discard: false
-    })
-  }).pipe(
+  wf.workflow.execute(message).pipe(
     Effect.provide(Layer.provideMerge(wf.handlers, Layer.merge(WorkflowEngine.layerMemory, publisherLayer))),
     Effect.orDie
-  ) as Effect.Effect<unknown, never, never>
-
-test("makePublishWorkflow invokes publisher exactly once on the happy path", async () => {
-  const calls: Array<TestPublishMessage> = []
-
-  const wf = makePublishWorkflow({
-    name: "TestHappy",
-    messageSchema: TestPublishMessage,
-    publisherTag: TestPublisher,
-    maxAttempts: 1
-  })
-
-  const publisherLayer = Layer.succeed(TestPublisher, {
-    publish: (message) =>
-      Effect.sync(() => { calls.push(message) })
-  })
-
-  await Effect.runPromise(
-    runWorkflow(wf, "msg-1", new TestPublishMessage({ id: "msg-1", payload: "hello" }), publisherLayer)
   )
 
-  expect(calls).toHaveLength(1)
-  expect(calls[0]?.id).toBe("msg-1")
-  expect(calls[0]?.payload).toBe("hello")
-})
+it.effect("makePublishWorkflow invokes publisher exactly once on the happy path", () =>
+  Effect.gen(function* () {
+    const calls: Array<TestPublishMessage> = []
 
-test("makePublishWorkflow gives up after maxAttempts when publisher always fails", async () => {
-  let calls = 0
+    const wf = makePublishWorkflow({
+      name: "TestHappy",
+      messageSchema: TestPublishMessage,
+      publisherTag: TestPublisher,
+      maxAttempts: 1
+    })
 
-  const wf = makePublishWorkflow({
-    name: "TestFail",
-    messageSchema: TestPublishMessage,
-    publisherTag: TestPublisher,
-    maxAttempts: 1
-  })
+    const publisherLayer = Layer.succeed(TestPublisher, {
+      publish: (message) =>
+        Effect.sync(() => { calls.push(message) })
+    })
 
-  const publisherLayer = Layer.succeed(TestPublisher, {
-    publish: () =>
-      Effect.sync(() => { calls += 1 }).pipe(
-        Effect.zipRight(Effect.fail("publish failed"))
-      )
-  })
+    yield* runWorkflow(wf, new TestPublishMessage({ id: "msg-1", payload: "hello" }), publisherLayer)
 
-  // Workflow handlers swallow the EventPublishError after maxAttempts
-  // (catchTag → Effect.void), so the program should resolve successfully.
-  await Effect.runPromise(
-    runWorkflow(wf, "msg-2", new TestPublishMessage({ id: "msg-2", payload: "doomed" }), publisherLayer)
-  )
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.id).toBe("msg-1")
+    expect(calls[0]?.payload).toBe("hello")
+  }))
 
-  // Publisher should have been called exactly maxAttempts times.
-  expect(calls).toBe(1)
-})
+it.effect("makePublishWorkflow gives up after maxAttempts when publisher always fails", () =>
+  Effect.gen(function* () {
+    let calls = 0
+
+    const wf = makePublishWorkflow({
+      name: "TestFail",
+      messageSchema: TestPublishMessage,
+      publisherTag: TestPublisher,
+      maxAttempts: 1
+    })
+
+    const publisherLayer = Layer.succeed(TestPublisher, {
+      publish: () =>
+        Effect.sync(() => { calls += 1 }).pipe(
+          Effect.zipRight(Effect.fail("publish failed"))
+        )
+    })
+
+    // Workflow handlers swallow the EventPublishError after maxAttempts
+    // (catchTag → Effect.void), so the program should resolve successfully.
+    yield* runWorkflow(wf, new TestPublishMessage({ id: "msg-2", payload: "doomed" }), publisherLayer)
+
+    // Publisher should have been called exactly maxAttempts times.
+    expect(calls).toBe(1)
+  }))
+
+it.effect("makePublishWorkflow start returns the workflow-owned execution id", () =>
+  Effect.gen(function* () {
+    const wf = makePublishWorkflow({
+      name: "TestStart",
+      messageSchema: TestPublishMessage,
+      publisherTag: TestPublisher,
+      maxAttempts: 1
+    })
+    const message = new TestPublishMessage({ id: "msg-3", payload: "start" })
+
+    const publisherLayer = Layer.succeed(TestPublisher, {
+      publish: () => Effect.void
+    })
+
+    const executionIds = yield* Effect.gen(function* () {
+      const expected = yield* wf.workflow.executionId(message)
+      const actual = yield* wf.start(message)
+      return { actual, expected }
+    }).pipe(
+      Effect.provide(Layer.provideMerge(wf.handlers, Layer.merge(WorkflowEngine.layerMemory, publisherLayer)))
+    )
+
+    expect(executionIds.actual).toBe(executionIds.expected)
+    expect(executionIds.actual).not.toBe(message.id)
+  }))
+
+it.effect("makePublishWorkflow start is idempotent for duplicate messages", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = []
+    const wf = makePublishWorkflow({
+      name: "TestDuplicateStart",
+      messageSchema: TestPublishMessage,
+      publisherTag: TestPublisher,
+      maxAttempts: 1
+    })
+    const message = new TestPublishMessage({ id: "msg-4", payload: "duplicate" })
+
+    const publisherLayer = Layer.succeed(TestPublisher, {
+      publish: (published) =>
+        Effect.sync(() => {
+          calls.push(published.id)
+        })
+    })
+
+    const executionIds = yield* Effect.gen(function* () {
+      const first = yield* wf.start(message)
+      const second = yield* wf.start(message)
+      return { first, second }
+    }).pipe(
+      Effect.provide(Layer.provideMerge(wf.handlers, Layer.merge(WorkflowEngine.layerMemory, publisherLayer)))
+    )
+
+    expect(executionIds.first).toBe(executionIds.second)
+    expect(calls).toEqual([message.id])
+  }))
+
+it.effect("makePublishWorkflow custom idOf controls workflow idempotency", () =>
+  Effect.gen(function* () {
+    const calls: Array<string> = []
+    const wf = makePublishWorkflow({
+      name: "TestCustomId",
+      messageSchema: TestPublishMessage,
+      publisherTag: TestPublisher,
+      idOf: (message) => message.payload,
+      maxAttempts: 1
+    })
+    const firstMessage = new TestPublishMessage({ id: "msg-5a", payload: "shared-key" })
+    const secondMessage = new TestPublishMessage({ id: "msg-5b", payload: "shared-key" })
+
+    const publisherLayer = Layer.succeed(TestPublisher, {
+      publish: (published) =>
+        Effect.sync(() => {
+          calls.push(published.id)
+        })
+    })
+
+    const executionIds = yield* Effect.gen(function* () {
+      const first = yield* wf.start(firstMessage)
+      const second = yield* wf.start(secondMessage)
+      const expected = yield* wf.workflow.executionId(firstMessage)
+      return { expected, first, second }
+    }).pipe(
+      Effect.provide(Layer.provideMerge(wf.handlers, Layer.merge(WorkflowEngine.layerMemory, publisherLayer)))
+    )
+
+    expect(executionIds.first).toBe(executionIds.expected)
+    expect(executionIds.second).toBe(executionIds.expected)
+    expect(calls).toEqual([firstMessage.id])
+  }))

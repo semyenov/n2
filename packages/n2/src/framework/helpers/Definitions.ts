@@ -100,6 +100,9 @@ type PrimaryKey<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefi
 type EntityRpcs<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> =
   RpcTupleFromCommands<Members>[number]
 
+type PersistedCommandTags<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> =
+  ReadonlyArray<CommandTagOf<Members[number]>>
+
 type CommandCollection<Members extends [CommandDefinition<Tagged>, ...Array<CommandDefinition<Tagged>>]> = {
   readonly schema: SchemaUnion<Members>
   readonly members: Members
@@ -119,6 +122,15 @@ type CommandCollection<Members extends [CommandDefinition<Tagged>, ...Array<Comm
   readonly toPersistedEntity: <const Type extends string>(
     name: Type,
     primaryKey: PrimaryKey<Members>
+  ) => Entity.Entity<Type, EntityRpcs<Members>>
+  /**
+   * Derive a cluster Entity where only the supplied command tags are annotated
+   * with `ClusterSchema.Persisted`.
+   */
+  readonly toEntityWithPersisted: <const Type extends string>(
+    name: Type,
+    primaryKey: PrimaryKey<Members>,
+    persistedTags: PersistedCommandTags<Members>
   ) => Entity.Entity<Type, EntityRpcs<Members>>
 }
 
@@ -146,6 +158,7 @@ export type {
   CommandInfoOf,
   CommandPayloadFieldsOf,
   CommandPayloadTypeOf,
+  PersistedCommandTags,
   CommandSuccessSchemaOf,
   CommandTagOf,
   SchemaUnion,
@@ -246,7 +259,7 @@ export const defineCommands = <const Members extends [CommandDefinition<Tagged>,
   const buildEntity = (
     name: string,
     primaryKey: PrimaryKey<Members>,
-    persisted: boolean
+    persisted: boolean | ReadonlySet<string>
   ) => {
     const [head, ...tail] = members
     const rpcs = rpcListFromCommandDefinitions(
@@ -254,6 +267,14 @@ export const defineCommands = <const Members extends [CommandDefinition<Tagged>,
       head,
       ...tail
     )
+    if (persisted instanceof Set) {
+      const selectedRpcs = rpcs.map((rpc) =>
+        persisted.has(rpc._tag)
+          ? rpc.annotate(ClusterSchema.Persisted, true)
+          : rpc
+      )
+      return Entity.make(name, selectedRpcs)
+    }
     const entity = Entity.make(name, rpcs)
     return persisted
       ? entity.annotateRpcs(ClusterSchema.Persisted, true)
@@ -267,6 +288,12 @@ export const defineCommands = <const Members extends [CommandDefinition<Tagged>,
     toEntity: <const Type extends string>(name: Type, primaryKey: PrimaryKey<Members>) =>
       makeTypedEntity<Type, Members>(buildEntity(name, primaryKey, false)),
     toPersistedEntity: <const Type extends string>(name: Type, primaryKey: PrimaryKey<Members>) =>
-      makeTypedEntity<Type, Members>(buildEntity(name, primaryKey, true))
+      makeTypedEntity<Type, Members>(buildEntity(name, primaryKey, true)),
+    toEntityWithPersisted: <const Type extends string>(
+      name: Type,
+      primaryKey: PrimaryKey<Members>,
+      persistedTags: PersistedCommandTags<Members>
+    ) =>
+      makeTypedEntity<Type, Members>(buildEntity(name, primaryKey, new Set(persistedTags)))
   }
 }

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import type * as Layer from "effect/Layer"
@@ -48,7 +48,7 @@ interface FooOutboxShape {
 
 class FooOutbox extends Context.Tag("FooOutbox")<FooOutbox, FooOutboxShape>() {}
 
-test("makeProjectionLayer composes a Layer with declarative handler map", () => {
+it("makeProjectionLayer composes a Layer with declarative handler map", () => {
   const layer = makeProjectionLayer({
     group: FooEventGroup,
     storeTag: FooStore,
@@ -65,7 +65,7 @@ test("makeProjectionLayer composes a Layer with declarative handler map", () => 
   expect(layer).toBeDefined()
 })
 
-test("makeProjectionLayer preserves optional outbox requirements", () => {
+it("makeProjectionLayer preserves optional outbox requirements", () => {
   const layer = makeProjectionLayer({
     group: FooEventGroup,
     storeTag: FooStore,
@@ -84,7 +84,7 @@ test("makeProjectionLayer preserves optional outbox requirements", () => {
   expect(layer).toBeDefined()
 })
 
-test("makeProjectionLayer rejects handler maps missing a tag", () => {
+it("makeProjectionLayer rejects handler maps missing a tag", () => {
   const layer = makeProjectionLayer({
     group: FooEventGroup,
     storeTag: FooStore,
@@ -96,7 +96,7 @@ test("makeProjectionLayer rejects handler maps missing a tag", () => {
   expect(layer).toBeDefined()
 })
 
-test("makeProjectionLayer infers store methods from the store tag", () => {
+it("makeProjectionLayer infers store methods from the store tag", () => {
   const layer = makeProjectionLayer({
     group: FooEventGroup,
     storeTag: FooStore,

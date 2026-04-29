@@ -5,7 +5,7 @@
  * tests pin down: store dispatch, outbox skipping, and the documented `orDie`
  * failure mode.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -29,7 +29,7 @@ interface TestOutboxShape {
 }
 class TestOutbox extends Context.Tag("TestOutbox")<TestOutbox, TestOutboxShape>() {}
 
-test("wireProjectionHandler dispatches store method and enqueues outbox message", async () => {
+it.effect("wireProjectionHandler dispatches store method and enqueues outbox message", () => Effect.gen(function* () {
   const storeCalls: Array<TestEvent> = []
   const outboxCalls: Array<{ orderId: string; value: number }> = []
 
@@ -50,17 +50,15 @@ test("wireProjectionHandler dispatches store method and enqueues outbox message"
     })
   )
 
-  await Effect.runPromise(
-    handler({ payload: { orderId: "order-1", amount: 100 } }).pipe(Effect.provide(layer))
-  )
+  yield* handler({ payload: { orderId: "order-1", amount: 100 } }).pipe(Effect.provide(layer))
 
   expect(storeCalls).toHaveLength(1)
   expect(storeCalls[0]).toBeInstanceOf(TestEvent)
   expect(storeCalls[0]?.payload).toEqual({ orderId: "order-1", amount: 100 })
   expect(outboxCalls).toEqual([{ orderId: "order-1", value: 200 }])
-})
+}))
 
-test("wireProjectionHandler skips outbox when outboxTag is undefined", async () => {
+it.effect("wireProjectionHandler skips outbox when outboxTag is undefined", () => Effect.gen(function* () {
   const storeCalls: Array<TestEvent> = []
 
   const handler = wireProjectionHandler(
@@ -74,15 +72,13 @@ test("wireProjectionHandler skips outbox when outboxTag is undefined", async () 
     onTestEvent: (event: TestEvent) => Effect.sync(() => { storeCalls.push(event) })
   })
 
-  await Effect.runPromise(
-    handler({ payload: { orderId: "order-2", amount: 50 } }).pipe(Effect.provide(layer))
-  )
+  yield* handler({ payload: { orderId: "order-2", amount: 50 } }).pipe(Effect.provide(layer))
 
   expect(storeCalls).toHaveLength(1)
   expect(storeCalls[0]?.payload.orderId).toBe("order-2")
-})
+}))
 
-test("wireProjectionHandler dies on store failure (orDie behavior)", async () => {
+it.effect("wireProjectionHandler dies on store failure (orDie behavior)", () => Effect.gen(function* () {
   const handler = wireProjectionHandler(
     TestStore,
     undefined,
@@ -94,8 +90,9 @@ test("wireProjectionHandler dies on store failure (orDie behavior)", async () =>
     onTestEvent: () => Effect.die("store exploded")
   })
 
-  const exit = await Effect.runPromiseExit(
-    handler({ payload: { orderId: "order-3", amount: 1 } }).pipe(Effect.provide(layer))
+  const exit = yield* handler({ payload: { orderId: "order-3", amount: 1 } }).pipe(
+    Effect.provide(layer),
+    Effect.exit
   )
 
   expect(Exit.isFailure(exit)).toBe(true)
@@ -104,4 +101,4 @@ test("wireProjectionHandler dies on store failure (orDie behavior)", async () =>
     expect(Cause.defects(exit.cause).length).toBeGreaterThan(0)
     expect(Cause.failureOption(exit.cause)._tag).toBe("None")
   }
-})
+}))

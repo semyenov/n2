@@ -548,6 +548,11 @@ export const define = <
     }
 
     type StateEntry = { readonly state: State; readonly revision: number }
+    type StateCellState = { readonly entry: StateEntry; readonly initialized: boolean }
+    type StateCell = {
+      readonly ref: SynchronizedRef.SynchronizedRef<StateCellState>
+      active: number
+    }
 
     const toStatefulRpcHandlers = <
       Rpcs extends Rpc.Any,
@@ -568,24 +573,30 @@ export const define = <
 
       return group.toLayer(
         Effect.gen(function* () {
-          const store = yield* SynchronizedRef.make(new Map<string, StateEntry>())
+          const cells = yield* SynchronizedRef.make(new Map<string, StateCell>())
           const accessOrder = new Map<string, number>()
 
-          const evictIfNeeded = (map: Map<string, StateEntry>) => {
+          const initialCellState: StateCellState = {
+            entry: { state: options.initialState, revision: 0 },
+            initialized: false
+          }
+
+          const evictIfNeeded = (map: Map<string, StateCell>, protectedEntityId?: string) => {
             if (!adapter.maxEntries || map.size <= adapter.maxEntries) return map
             const sorted = [...accessOrder.entries()].sort((a, b) => a[1] - b[1])
-            const toEvict = sorted.slice(0, map.size - adapter.maxEntries)
             const next = new Map(map)
-            for (const [id] of toEvict) {
+            for (const [id] of sorted) {
+              if (next.size <= adapter.maxEntries) break
+              if (id === protectedEntityId) continue
+              const cell = next.get(id)
+              if (cell === undefined || cell.active > 0) continue
               next.delete(id)
               accessOrder.delete(id)
             }
             return next
           }
 
-          const getOrLoad = (map: Map<string, StateEntry>, entityId: string): Effect.Effect<StateEntry, never, unknown> => {
-            accessOrder.set(entityId, Date.now())
-            if (map.has(entityId)) return Effect.succeed(map.get(entityId)!)
+          const loadEntry = (entityId: string): Effect.Effect<StateEntry, never, unknown> => {
             if (!adapter.snapshots) return Effect.succeed({ state: options.initialState, revision: 0 })
             return adapter.snapshots.load(entityId).pipe(
               Effect.map(Option.getOrElse(() => ({ state: options.initialState, revision: 0 }))),
@@ -593,10 +604,58 @@ export const define = <
             )
           }
 
+          const ensureLoaded = (
+            entityId: string,
+            state: StateCellState
+          ): Effect.Effect<StateCellState, never, unknown> =>
+            state.initialized
+              ? Effect.succeed(state)
+              : loadEntry(entityId).pipe(
+                  Effect.map((entry): StateCellState => ({ entry, initialized: true }))
+                )
+
+          const acquireCell = (entityId: string): Effect.Effect<StateCell, never> =>
+            SynchronizedRef.modifyEffect(cells, (map) =>
+              Effect.gen(function* () {
+                let cell = map.get(entityId)
+                let next = map
+                if (cell === undefined) {
+                  cell = {
+                    ref: yield* SynchronizedRef.make(initialCellState),
+                    active: 0
+                  }
+                  next = new Map(map).set(entityId, cell)
+                }
+                cell.active += 1
+                accessOrder.set(entityId, Date.now())
+                return [cell, evictIfNeeded(next, entityId)] as const
+              })
+            )
+
+          const releaseCell = (entityId: string, cell: StateCell): Effect.Effect<void> =>
+            SynchronizedRef.update(cells, (map) => {
+              cell.active = Math.max(0, cell.active - 1)
+              accessOrder.set(entityId, Date.now())
+              return evictIfNeeded(map)
+            })
+
+          const withCell = <A, E, Req>(
+            entityId: string,
+            use: (cell: StateCell) => Effect.Effect<A, E, Req>
+          ): Effect.Effect<A, E, Req> =>
+            Effect.acquireUseRelease(
+              acquireCell(entityId),
+              use,
+              (cell) => releaseCell(entityId, cell)
+            )
+
           const getState = (entityId: string): Effect.Effect<State, never, unknown> =>
-            SynchronizedRef.get(store).pipe(
-              Effect.flatMap((map) => getOrLoad(map, entityId)),
-              Effect.map(({ state }) => state)
+            withCell(entityId, (cell) =>
+              SynchronizedRef.modifyEffect(cell.ref, (cellState) =>
+                ensureLoaded(entityId, cellState).pipe(
+                  Effect.map((loaded) => [loaded.entry.state, loaded] as const)
+                )
+              )
             )
 
           const handlers: Partial<RpcGroup.HandlersFrom<Rpcs>> = {}
@@ -635,61 +694,59 @@ export const define = <
                 if (adapter.middleware) {
                   yield* adapter.middleware({ entityId, command })
                 }
-                const [result, events, finalState, nextRevision] = yield* SynchronizedRef.modifyEffect(store, (map) =>
-                  getOrLoad(map, entityId).pipe(
-                    Effect.flatMap(({ state, revision: prevRevision }) =>
-                      handle(state, command).pipe(
-                        Effect.mapError((error) => adapter.toError(error)),
-                        Effect.map(({ events, state: next }) => {
-                          let finalState = next
-                          if (adapter.postHandle) {
-                            finalState = adapter.postHandle({
-                              entityId, command, events, state: next
-                            })
-                          }
-                          const nextRevision = prevRevision + events.length
-                          const nextMap = evictIfNeeded(new Map(map).set(entityId, { state: finalState, revision: nextRevision }))
-                          return [
-                            [
-                              adapter.toResult({
-                                entityId,
-                                revision: nextRevision,
-                                command,
-                                events,
-                                state: finalState
-                              }),
+                const result = yield* withCell(entityId, (cell) =>
+                  SynchronizedRef.modifyEffect(cell.ref, (cellState) =>
+                    ensureLoaded(entityId, cellState).pipe(
+                      Effect.flatMap(({ entry }) =>
+                        handle(entry.state, command).pipe(
+                          Effect.mapError((error) => adapter.toError(error)),
+                          Effect.flatMap(({ events, state: next }) => {
+                            let finalState = next
+                            if (adapter.postHandle) {
+                              finalState = adapter.postHandle({
+                                entityId, command, events, state: next
+                              })
+                            }
+                            const nextRevision = entry.revision + events.length
+                            const nextEntry = { state: finalState, revision: nextRevision }
+                            const result = adapter.toResult({
+                              entityId,
+                              revision: nextRevision,
+                              command,
                               events,
-                              finalState,
-                              nextRevision
-                            ] as const,
-                            nextMap
-                          ] as const
-                        })
+                              state: finalState
+                            })
+
+                            return Effect.gen(function* () {
+                              if (adapter.afterCommit && events.length > 0) {
+                                yield* adapter.afterCommit({
+                                  entityId,
+                                  revision: nextRevision,
+                                  command,
+                                  events,
+                                  state: finalState
+                                }).pipe(
+                                  Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
+                                  Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
+                                  Effect.ignore
+                                )
+                              }
+
+                              if (adapter.snapshots && nextRevision > 0 && nextRevision % adapter.snapshots.every === 0) {
+                                yield* adapter.snapshots.save(entityId, finalState, nextRevision).pipe(
+                                  Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
+                                  Effect.ignore
+                                )
+                              }
+
+                              return [result, { entry: nextEntry, initialized: true }] as const
+                            })
+                          })
+                        )
                       )
                     )
                   )
                 )
-
-                if (adapter.afterCommit && events.length > 0) {
-                  yield* adapter.afterCommit({
-                    entityId,
-                    revision: nextRevision,
-                    command,
-                    events,
-                    state: finalState
-                  }).pipe(
-                    Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
-                    Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
-                    Effect.ignore
-                  )
-                }
-
-                if (adapter.snapshots && nextRevision > 0 && nextRevision % adapter.snapshots.every === 0) {
-                  yield* adapter.snapshots.save(entityId, finalState, nextRevision).pipe(
-                    Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
-                    Effect.ignore
-                  )
-                }
 
                 return result
               })

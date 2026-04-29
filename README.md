@@ -73,6 +73,7 @@ const OrderHandlers = Order.toStatefulRpcHandlers(OrderRpcs, {
 
 - **[Getting Started](docs/getting-started.md)** — project setup, first aggregate
 - **[Framework API](docs/framework-api.md)** — complete reference for all helpers
+- **[Effect API Playbook](docs/effect-api-playbook.md)** — Effect API map for N2 contributors
 - **[Patterns](docs/patterns.md)** — projections, outbox, workflows, replay
 - **[Examples](docs/examples.md)** — order and profiler walkthroughs
 - **[Observability](docs/observability.md)** — local OpenTelemetry setup

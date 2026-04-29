@@ -3,7 +3,7 @@
  * derive cluster entities, EventGroups, and tagged unions from contracts.
  * Bugs here corrupt the wiring between contracts and infrastructure silently.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Context from "effect/Context"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
@@ -23,6 +23,12 @@ class AddItem extends Schema.TaggedRequest<AddItem>()("AddItem", {
   failure: Schema.Struct({ message: Schema.String })
 }) {}
 
+class GetOrder extends Schema.TaggedRequest<GetOrder>()("GetOrder", {
+  payload: { orderId: Schema.String },
+  success: Schema.Struct({ orderId: Schema.String }),
+  failure: Schema.Struct({ message: Schema.String })
+}) {}
+
 class OrderCreated extends Schema.TaggedClass<OrderCreated>()("OrderCreated", {
   orderId: Schema.String,
   customerId: Schema.String
@@ -34,7 +40,7 @@ class ItemAdded extends Schema.TaggedClass<ItemAdded>()("ItemAdded", {
   quantity: Schema.Number
 }) {}
 
-test("eventPayloadSchema strips _tag and yields a Schema.Struct over the remaining fields", () => {
+it("eventPayloadSchema strips _tag and yields a Schema.Struct over the remaining fields", () => {
   const schema = eventPayloadSchema(OrderCreated)
   // The Schema.Struct should expose .fields with the original keys minus _tag.
   const fieldKeys = Object.keys((schema as { readonly fields: Record<string, unknown> }).fields)
@@ -47,7 +53,7 @@ test("eventPayloadSchema strips _tag and yields a Schema.Struct over the remaini
   expect(decoded).toEqual({ orderId: "o-1", customerId: "c-1" })
 })
 
-test("defineCommands.toPersistedEntity annotates every Rpc with ClusterSchema.Persisted = true", () => {
+it("defineCommands.toPersistedEntity annotates every Rpc with ClusterSchema.Persisted = true", () => {
   const Cmds = defineCommands(CreateOrder, AddItem)
   const entity = Cmds.toPersistedEntity("Order", (p) => p.orderId)
 
@@ -61,7 +67,7 @@ test("defineCommands.toPersistedEntity annotates every Rpc with ClusterSchema.Pe
   }
 })
 
-test("defineCommands.toEntity does not flag every Rpc as Persisted=true", () => {
+it("defineCommands.toEntity does not flag every Rpc as Persisted=true", () => {
   // toEntity should NOT explicitly mark rpcs as Persisted=true. Either the
   // annotation is absent, or it's set to false (the impl branch uses
   // `persisted ? annotateRpcs(...true) : entity`).
@@ -77,7 +83,29 @@ test("defineCommands.toEntity does not flag every Rpc as Persisted=true", () => 
   }
 })
 
-test("defineEvents.toEventGroup builds a group with one entry per event and the right payload schemas", () => {
+it("defineCommands.toEntityWithPersisted annotates only selected Rpc tags", () => {
+  const Cmds = defineCommands(CreateOrder, AddItem, GetOrder)
+  const entity = Cmds.toEntityWithPersisted("Order", (p) => p.orderId, [
+    "CreateOrder",
+    "AddItem"
+  ])
+
+  const persistedByTag = new Map(
+    Array.from(entity.protocol.requests.values(), (rpc) => [
+      rpc._tag,
+      Context.getOption(rpc.annotations, ClusterSchema.Persisted)
+    ])
+  )
+
+  expect(persistedByTag.get("CreateOrder")).toEqual(Option.some(true))
+  expect(persistedByTag.get("AddItem")).toEqual(Option.some(true))
+  const getOrderPersisted = persistedByTag.get("GetOrder")!
+  if (Option.isSome(getOrderPersisted)) {
+    expect(getOrderPersisted.value).not.toBe(true)
+  }
+})
+
+it("defineEvents.toEventGroup builds a group with one entry per event and the right payload schemas", () => {
   const Events = defineEvents(OrderCreated, ItemAdded)
   const group = Events.toEventGroup((p) => p.orderId)
 
@@ -95,7 +123,7 @@ test("defineEvents.toEventGroup builds a group with one entry per event and the 
   expect(payloadFields.sort()).toEqual(["customerId", "orderId"])
 })
 
-test("defineEvents.toEventGroup wires the primaryKey function into each event", () => {
+it("defineEvents.toEventGroup wires the primaryKey function into each event", () => {
   const Events = defineEvents(OrderCreated, ItemAdded)
   const group = Events.toEventGroup((p) => `pk:${p.orderId}`)
 

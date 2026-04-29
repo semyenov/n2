@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -10,7 +10,7 @@ type IsNever<T> = [T] extends [never] ? true : false
 
 const EmptyRpcs = RpcGroup.make()
 
-test("makeServerEntrypoint returns an Effect with E=never via Effect.orDie", () => {
+it("makeServerEntrypoint returns an Effect with E=never via Effect.orDie", () => {
   const program = makeServerEntrypoint({
     group: EmptyRpcs,
     path: "/rpc/test",

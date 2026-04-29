@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
@@ -23,7 +23,7 @@ class TestSnapshots extends Context.Tag("TestSnapshots")<
   SnapshotService<{ readonly value: number }>
 >() {}
 
-test("makeStandardSnapshotWiring builds entity snapshot ops", async () => {
+it.effect("makeStandardSnapshotWiring builds entity snapshot ops", () => Effect.gen(function* () {
   const wiring = makeStandardSnapshotWiring({
     tag: TestSnapshots,
     table: "test_snapshots",
@@ -41,31 +41,27 @@ test("makeStandardSnapshotWiring builds entity snapshot ops", async () => {
     })
   })
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      yield* wiring.ops.load("a")
-      yield* wiring.ops.save("a", { value: 1 }, 2)
-    }).pipe(Effect.provide(layer))
-  )
+  yield* Effect.gen(function* () {
+    yield* wiring.ops.load("a")
+    yield* wiring.ops.save("a", { value: 1 }, 2)
+  }).pipe(Effect.provide(layer))
 
   expect(wiring.ops.every).toBe(10)
   expect(calls).toEqual(["load:a", "save:a:1:2"])
-})
+}))
 
-test("makeConsoleEventPublisherLayer logs publish metadata", async () => {
+it.effect("makeConsoleEventPublisherLayer logs publish metadata", () => Effect.gen(function* () {
   const layer = makeConsoleEventPublisherLayer(TestPublisher, "published")
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const publisher = yield* TestPublisher
-      yield* publisher.publish(new TestMessage({
-        id: "m-1",
-        topic: "events",
-        partitionKey: "entity-1",
-        payload: { ok: true }
-      }))
-    }).pipe(Effect.provide(layer))
-  )
-})
+  yield* Effect.gen(function* () {
+    const publisher = yield* TestPublisher
+    yield* publisher.publish(new TestMessage({
+      id: "m-1",
+      topic: "events",
+      partitionKey: "entity-1",
+      payload: { ok: true }
+    }))
+  }).pipe(Effect.provide(layer))
+}))
 
 class WiringTestMessage extends Schema.Class<WiringTestMessage>("WiringTestMessage")({
   id: Schema.String,
@@ -77,7 +73,7 @@ class WiringTestOutbox extends Context.Tag("WiringTestOutbox")<
   OutboxService<WiringTestMessage>
 >() {}
 
-test("makeStandardOutboxWiring returns live, drainOnce, and workerLive", () => {
+it("makeStandardOutboxWiring returns live, drainOnce, and workerLive", () => {
   const wiring = makeStandardOutboxWiring({
     tag: WiringTestOutbox,
     table: "test_outbox",
@@ -89,7 +85,7 @@ test("makeStandardOutboxWiring returns live, drainOnce, and workerLive", () => {
   expect(typeof wiring.drainOnce).toBe("object")
 })
 
-test("makeStandardOutboxWiring drainOnce returns false when outbox is empty", async () => {
+it.effect("makeStandardOutboxWiring drainOnce returns false when outbox is empty", () => Effect.gen(function* () {
   const wiring = makeStandardOutboxWiring({
     tag: WiringTestOutbox,
     table: "test_outbox",
@@ -103,8 +99,6 @@ test("makeStandardOutboxWiring drainOnce returns false when outbox is empty", as
     markFailed: (_id, _retryCount, _error) => Effect.void,
     markDeadLetter: (_id, _error) => Effect.void
   })
-  const result = await Effect.runPromise(
-    wiring.drainOnce.pipe(Effect.provide(mockLayer))
-  )
+  const result = yield* wiring.drainOnce.pipe(Effect.provide(mockLayer))
   expect(result).toBe(false)
-})
+}))

@@ -3,9 +3,14 @@
  *
  * Tests the core handle/run/evolve/decide logic with a minimal aggregate.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
+import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
+import * as Fiber from "effect/Fiber"
+import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
+import * as TestClock from "effect/TestClock"
+import { RpcTest } from "@effect/rpc"
 import { define } from "./Definition.js"
 import { defineCommands, defineEvents } from "./Definitions.js"
 
@@ -71,54 +76,86 @@ const Counter = define<TestEvent, TestCommand>()({
   }
 })
 
-const run = <A, E>(effect: Effect.Effect<A, E, never>): Promise<A> =>
-  Effect.runPromise(effect)
+class DelayedIncremented extends Schema.TaggedClass<DelayedIncremented>()(
+  "DelayedIncremented",
+  { amount: Schema.Number }
+) {}
 
-test("handle produces events and applies evolve", async () => {
-  const { state, events } = await run(Counter.handle({ count: 0 }, new Increment({ amount: 5 })))
+const DelayedEvents = defineEvents(DelayedIncremented)
+type DelayedEvent = typeof DelayedEvents.schema.Type
+
+class DelayedIncrement extends Schema.TaggedRequest<DelayedIncrement>("DelayedIncrement")(
+  "DelayedIncrement",
+  {
+    failure: CounterError,
+    success: Schema.Number,
+    payload: {
+      counterId: Schema.String,
+      amount: Schema.Number
+    }
+  }
+) {}
+
+class GetDelayedCount extends Schema.TaggedRequest<GetDelayedCount>("GetDelayedCount")(
+  "GetDelayedCount",
+  {
+    failure: CounterError,
+    success: Schema.Number,
+    payload: {
+      counterId: Schema.String
+    }
+  }
+) {}
+
+const DelayedCommands = defineCommands(DelayedIncrement, GetDelayedCount)
+type DelayedCommand = typeof DelayedCommands.schema.Type
+const DelayedEntity = DelayedCommands.toEntity("DelayedCounter", (command) => command.counterId)
+
+it.effect("handle produces events and applies evolve", () => Effect.gen(function* () {
+  const { state, events } = yield* Counter.handle({ count: 0 }, new Increment({ amount: 5 }))
   expect(state.count).toBe(5)
   expect(events).toHaveLength(1)
   expect(events[0]?._tag).toBe("Incremented")
-})
+}))
 
-test("handle accumulates state across events", async () => {
-  const { state: s1 } = await run(Counter.handle({ count: 0 }, new Increment({ amount: 3 })))
-  const { state: s2 } = await run(Counter.handle(s1, new Increment({ amount: 7 })))
+it.effect("handle accumulates state across events", () => Effect.gen(function* () {
+  const { state: s1 } = yield* Counter.handle({ count: 0 }, new Increment({ amount: 3 }))
+  const { state: s2 } = yield* Counter.handle(s1, new Increment({ amount: 7 }))
   expect(s2.count).toBe(10)
-})
+}))
 
-test("handle returns error for invalid command", async () => {
-  const err = await run(Counter.handle({ count: 0 }, new Increment({ amount: -1 })).pipe(Effect.flip))
+it.effect("handle returns error for invalid command", () => Effect.gen(function* () {
+  const err = yield* Counter.handle({ count: 0 }, new Increment({ amount: -1 })).pipe(Effect.flip)
   expect(err._tag).toBe("CounterError")
   expect(err.message).toContain("positive")
-})
+}))
 
-test("handle returns empty events for no-op command", async () => {
-  const { state, events } = await run(Counter.handle({ count: 0 }, new Reset({})))
+it.effect("handle returns empty events for no-op command", () => Effect.gen(function* () {
+  const { state, events } = yield* Counter.handle({ count: 0 }, new Reset({}))
   expect(events).toHaveLength(0)
   expect(state.count).toBe(0)
-})
+}))
 
-test("run processes multiple commands sequentially", async () => {
-  const { state, events } = await run(Counter.run([
+it.effect("run processes multiple commands sequentially", () => Effect.gen(function* () {
+  const { state, events } = yield* Counter.run([
     new Increment({ amount: 1 }),
     new Increment({ amount: 2 }),
     new Increment({ amount: 3 })
-  ]))
+  ])
   expect(state.count).toBe(6)
   expect(events).toHaveLength(3)
-})
+}))
 
-test("run stops on first error", async () => {
-  const err = await run(Counter.run([
+it.effect("run stops on first error", () => Effect.gen(function* () {
+  const err = yield* Counter.run([
     new Increment({ amount: 1 }),
     new Increment({ amount: -1 }),
     new Increment({ amount: 3 })
-  ]).pipe(Effect.flip))
+  ]).pipe(Effect.flip)
   expect(err._tag).toBe("CounterError")
-})
+}))
 
-test("evolve is a pure function", () => {
+it("evolve is a pure function", () => {
   const state = Counter.evolve({ count: 10 }, new Incremented({ value: 5 }))
   expect(state.count).toBe(15)
 
@@ -126,18 +163,136 @@ test("evolve is a pure function", () => {
   expect(resetState.count).toBe(0)
 })
 
-test("decide returns events without applying them", async () => {
-  const events = await run(Counter.decide({ count: 5 }, new Increment({ amount: 3 })))
+it.effect("decide returns events without applying them", () => Effect.gen(function* () {
+  const events = yield* Counter.decide({ count: 5 }, new Increment({ amount: 3 }))
   expect(events).toHaveLength(1)
   expect(events[0]?._tag).toBe("Incremented")
-})
+}))
 
-test("initialState is accessible", () => {
+it("initialState is accessible", () => {
   expect(Counter.initialState.count).toBe(0)
 })
 
-test("defineEvents derives an EventGroup with payload schemas", () => {
+it("defineEvents derives an EventGroup with payload schemas", () => {
   const group = TestEvents.toEventGroup(() => "counter")
 
   expect(Object.keys(group.events).sort()).toEqual(["Incremented", "WasReset"])
 })
+
+it.effect("stateful RPC handlers serialize the same entity without serializing every entity", () =>
+  Effect.scoped(Effect.gen(function* () {
+    const activeDecisions = yield* Ref.make(0)
+    const maxActiveDecisions = yield* Ref.make(0)
+    const releaseDecisions = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined)
+    const firstEntered = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined)
+    const secondEntered = yield* Ref.make<Deferred.Deferred<void> | undefined>(undefined)
+
+    const signal = (deferred: Deferred.Deferred<void> | undefined) =>
+      deferred === undefined
+        ? Effect.void
+        : Deferred.succeed(deferred, undefined).pipe(Effect.asVoid)
+
+    const makeBarrier = Effect.gen(function* () {
+      const release = yield* Deferred.make<void>()
+      const first = yield* Deferred.make<void>()
+      const second = yield* Deferred.make<void>()
+      yield* Ref.set(releaseDecisions, release)
+      yield* Ref.set(firstEntered, first)
+      yield* Ref.set(secondEntered, second)
+      return { release, first, second }
+    })
+
+    const awaitOrFail = (deferred: Deferred.Deferred<void>, message: string) =>
+      Effect.gen(function* () {
+        const waiter = yield* Deferred.await(deferred).pipe(
+          Effect.timeoutFail({
+            duration: "1 second",
+            onTimeout: () => new Error(message)
+          }),
+          Effect.fork
+        )
+        yield* TestClock.adjust("1 second")
+        yield* Fiber.join(waiter)
+      })
+
+    const trackDecision = Effect.gen(function* () {
+      const release = yield* Ref.get(releaseDecisions)
+      const active = yield* Ref.updateAndGet(activeDecisions, (n) => n + 1)
+      yield* Ref.update(maxActiveDecisions, (max) => Math.max(max, active))
+      yield* signal(yield* Ref.get(active === 1 ? firstEntered : secondEntered))
+      yield* (release === undefined ? Effect.void : Deferred.await(release)).pipe(
+        Effect.ensuring(Ref.update(activeDecisions, (n) => n - 1))
+      )
+    })
+
+    const DelayedCounter = define<DelayedEvent, DelayedCommand>()({
+      initialState: { count: 0 } as CounterState,
+      commands: DelayedCommands.constructors,
+      evolve: {
+        DelayedIncremented: (state, event) => ({ count: state.count + event.amount })
+      },
+      decide: {
+        DelayedIncrement: (_state, command) =>
+          trackDecision.pipe(
+            Effect.as([new DelayedIncremented({ amount: command.amount })])
+          ),
+        GetDelayedCount: () => Effect.succeed([])
+      }
+    })
+
+    const handlers = DelayedCounter.toStatefulRpcHandlers(
+      DelayedEntity.protocol,
+      {
+        entityId: (command) => command.counterId,
+        toResult: ({ state }) => state.count,
+        toError: (error) =>
+          error instanceof CounterError
+            ? error
+            : new CounterError({ message: String(error) }),
+        overrides: {
+          GetDelayedCount: (command, ctx) =>
+            ctx.getState(command.counterId).pipe(
+              Effect.map((state) => state.count)
+            )
+        }
+      }
+    )
+
+    yield* Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(DelayedEntity.protocol)
+
+      const differentEntities = yield* makeBarrier
+      const differentFiber = yield* Effect.all([
+        client.DelayedIncrement({ counterId: "counter-a", amount: 1 }),
+        client.DelayedIncrement({ counterId: "counter-b", amount: 1 })
+      ], { concurrency: "unbounded", discard: true }).pipe(Effect.fork)
+      yield* awaitOrFail(
+        differentEntities.second,
+        "different entity commands did not enter decisions concurrently"
+      )
+      expect(yield* Ref.get(maxActiveDecisions)).toBe(2)
+      yield* Deferred.succeed(differentEntities.release, undefined)
+      yield* Fiber.join(differentFiber)
+
+      yield* Ref.set(activeDecisions, 0)
+      yield* Ref.set(maxActiveDecisions, 0)
+      const sameEntity = yield* makeBarrier
+      const sameFiber = yield* Effect.all([
+        client.DelayedIncrement({ counterId: "counter-c", amount: 1 }),
+        client.DelayedIncrement({ counterId: "counter-c", amount: 1 })
+      ], { concurrency: "unbounded", discard: true }).pipe(Effect.fork)
+      yield* awaitOrFail(
+        sameEntity.first,
+        "same entity command did not enter the first decision"
+      )
+      yield* Effect.yieldNow()
+      yield* Effect.yieldNow()
+      expect(yield* Deferred.isDone(sameEntity.second)).toBe(false)
+      yield* Deferred.succeed(sameEntity.release, undefined)
+      yield* Fiber.join(sameFiber)
+      expect(yield* Ref.get(maxActiveDecisions)).toBe(1)
+
+      const count = yield* client.GetDelayedCount({ counterId: "counter-c" })
+      expect(count).toBe(2)
+    }).pipe(Effect.provide(handlers))
+  })))

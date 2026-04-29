@@ -3,7 +3,7 @@
  * Rpc definitions from `Schema.TaggedRequest` command classes. Bugs here
  * silently corrupt cluster entity wiring.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as PrimaryKey from "effect/PrimaryKey"
 import * as Schema from "effect/Schema"
 import { rpcFromCommand, rpcListFromCommandDefinitions } from "./EntityBuilder.js"
@@ -27,12 +27,12 @@ class AddItem extends Schema.TaggedRequest<AddItem>()("AddItem", {
   failure: Schema.Struct({ message: Schema.String })
 }) {}
 
-test("rpcFromCommand derives Rpc with _tag matching the command tag", () => {
+it("rpcFromCommand derives Rpc with _tag matching the command tag", () => {
   const rpc = rpcFromCommand(CreateOrder, (p) => p.orderId)
   expect(rpc._tag).toBe("CreateOrder")
 })
 
-test("rpcFromCommand strips _tag from payload fields", () => {
+it("rpcFromCommand strips _tag from payload fields", () => {
   const rpc = rpcFromCommand(CreateOrder, (p) => p.orderId)
   // Rpc.make wraps a payload-fields record into a Schema.Class — the resulting
   // payloadSchema exposes `.fields` listing the (stripped) field keys.
@@ -42,7 +42,7 @@ test("rpcFromCommand strips _tag from payload fields", () => {
   expect(fieldKeys).not.toContain("_tag")
 })
 
-test("rpcFromCommand threads success and failure schemas unchanged", () => {
+it("rpcFromCommand threads success and failure schemas unchanged", () => {
   const rpc = rpcFromCommand(CreateOrder, (p) => p.orderId)
   const successSchema = (rpc as unknown as { readonly successSchema: unknown }).successSchema
   const errorSchema = (rpc as unknown as { readonly errorSchema: unknown }).errorSchema
@@ -50,7 +50,7 @@ test("rpcFromCommand threads success and failure schemas unchanged", () => {
   expect(errorSchema).toBe(CreateOrder.failure)
 })
 
-test("rpcFromCommand wires primaryKey via the PrimaryKey symbol on the payload class", () => {
+it("rpcFromCommand wires primaryKey via the PrimaryKey symbol on the payload class", () => {
   const primaryKey = (p: { orderId: string }) => `pk:${p.orderId}`
   const rpc = rpcFromCommand(CreateOrder, primaryKey)
 
@@ -63,7 +63,7 @@ test("rpcFromCommand wires primaryKey via the PrimaryKey symbol on the payload c
   expect(PrimaryKey.value(payload as never)).toBe("pk:o-1")
 })
 
-test("rpcListFromCommandDefinitions builds an array preserving tag order", () => {
+it("rpcListFromCommandDefinitions builds an array preserving tag order", () => {
   const rpcs = rpcListFromCommandDefinitions(
     (p: { orderId: string }) => p.orderId,
     CreateOrder,

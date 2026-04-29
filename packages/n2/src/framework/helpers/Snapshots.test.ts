@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
@@ -19,7 +19,7 @@ class TestSnapshots extends Context.Tag("TestSnapshots")<
   SnapshotService<TestState>
 >() {}
 
-test("makeSnapshotOps delegates load and save through the snapshot tag", async () => {
+it.effect("makeSnapshotOps delegates load and save through the snapshot tag", () => Effect.gen(function* () {
   const calls: Array<string> = []
   const ops = makeSnapshotOps(TestSnapshots, 25)
   const layer = Layer.succeed(TestSnapshots, {
@@ -34,18 +34,16 @@ test("makeSnapshotOps delegates load and save through the snapshot tag", async (
       })
   })
 
-  const loaded = await Effect.runPromise(
-    Effect.gen(function* () {
-      const snapshot = yield* ops.load("entity-1")
-      yield* ops.save("entity-1", { value: 43 }, 8)
-      return snapshot
-    }).pipe(Effect.provide(layer))
-  )
+  const loaded = yield* Effect.gen(function* () {
+    const snapshot = yield* ops.load("entity-1")
+    yield* ops.save("entity-1", { value: 43 }, 8)
+    return snapshot
+  }).pipe(Effect.provide(layer))
 
   expect(ops.every).toBe(25)
   expect(Option.getOrUndefined(loaded)).toEqual({ state: { value: 42 }, revision: 7 })
   expect(calls).toEqual(["load:entity-1", "save:entity-1:43:8"])
-})
+}))
 
 class TypedState extends Schema.Class<TypedState>("TypedState")({
   value: Schema.Number
@@ -56,7 +54,7 @@ class TypedSnapshots extends Context.Tag("TypedSnapshots")<
   SnapshotService<TypedState>
 >() {}
 
-test("load surfaces ParseError as a typed failure on malformed state_json", async () => {
+it.effect("load surfaces ParseError as a typed failure on malformed state_json", () => Effect.gen(function* () {
   type FakeSql = {
     (strings: TemplateStringsArray | string, ...params: ReadonlyArray<unknown>): unknown
   }
@@ -83,11 +81,12 @@ test("load surfaces ParseError as a typed failure on malformed state_json", asyn
     Layer.succeed(SqlClient, fakeSql as unknown as SqlClientInstance)
   )
 
-  const exit = await Effect.runPromiseExit(
-    Effect.gen(function* () {
-      const service = yield* TypedSnapshots
-      return yield* service.load("entity-bad")
-    }).pipe(Effect.provide(layer))
+  const exit = yield* Effect.gen(function* () {
+    const service = yield* TypedSnapshots
+    return yield* service.load("entity-bad")
+  }).pipe(
+    Effect.provide(layer),
+    Effect.exit
   )
 
   expect(Exit.isFailure(exit)).toBe(true)
@@ -99,4 +98,4 @@ test("load surfaces ParseError as a typed failure on malformed state_json", asyn
     }
     expect(Cause.defects(exit.cause).length).toBe(0)
   }
-})
+}))

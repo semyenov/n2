@@ -24,7 +24,7 @@ import * as Cause from "effect/Cause"
 import type * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
-import { Activity, DurableClock, Workflow, WorkflowEngine } from "@effect/workflow"
+import { Activity, DurableClock, Workflow } from "@effect/workflow"
 import { computeRetryDelaySeconds } from "./Outbox.js"
 
 export class EventPublishError extends Schema.TaggedError<EventPublishError>()(
@@ -113,14 +113,7 @@ export const makePublishWorkflow = <Message extends { readonly id: string }, Pub
   })
 
   const start = (message: Message) =>
-    Effect.gen(function* () {
-      const engine = yield* Effect.orDie(Effect.serviceOptional(WorkflowEngine.WorkflowEngine))
-      return yield* engine.execute(workflow, {
-        executionId: idOf(message),
-        payload: message,
-        discard: true
-      })
-    })
+    workflow.execute(message, { discard: true })
 
   const handlers = workflow.toLayer(
     (payload, executionId) =>

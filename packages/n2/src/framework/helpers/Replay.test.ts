@@ -1,7 +1,7 @@
 /**
  * Framework-level unit tests for parseReplayOptions.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import type { EventGroup } from "@effect/experimental"
 import type * as EventJournalApi from "@effect/experimental/EventJournal"
@@ -31,7 +31,7 @@ const decodeTestEvent = (entry: EventJournalApi.Entry) => {
   })
 }
 
-test("parseReplayOptions with no args returns defaults", () => {
+it("parseReplayOptions with no args returns defaults", () => {
   const opts = parseReplayOptions([], false)
   expect(opts.entityId).toBeUndefined()
   expect(opts.minRevision).toBeUndefined()
@@ -40,63 +40,63 @@ test("parseReplayOptions with no args returns defaults", () => {
   expect(opts.dryRun).toBe(false)
 })
 
-test("parseReplayOptions respects resetFromEnv default", () => {
+it("parseReplayOptions respects resetFromEnv default", () => {
   const opts = parseReplayOptions([], true)
   expect(opts.reset).toBe(true)
 })
 
-test("parseReplayOptions parses --entity-id", () => {
+it("parseReplayOptions parses --entity-id", () => {
   const opts = parseReplayOptions(["--entity-id", "abc-123"], false)
   expect(opts.entityId).toBe("abc-123")
 })
 
-test("parseReplayOptions parses --profile-id alias", () => {
+it("parseReplayOptions parses --profile-id alias", () => {
   const opts = parseReplayOptions(["--profile-id", "abc-123"], false)
   expect(opts.entityId).toBe("abc-123")
 })
 
-test("parseReplayOptions parses revision range", () => {
+it("parseReplayOptions parses revision range", () => {
   const opts = parseReplayOptions(["--min-revision", "5", "--max-revision", "10"], false)
   expect(opts.minRevision).toBe(5)
   expect(opts.maxRevision).toBe(10)
 })
 
-test("parseReplayOptions parses --dry-run", () => {
+it("parseReplayOptions parses --dry-run", () => {
   const opts = parseReplayOptions(["--dry-run"], false)
   expect(opts.dryRun).toBe(true)
 })
 
-test("parseReplayOptions --reset overrides env default", () => {
+it("parseReplayOptions --reset overrides env default", () => {
   const opts = parseReplayOptions(["--reset"], false)
   expect(opts.reset).toBe(true)
 })
 
-test("parseReplayOptions --no-reset overrides env default", () => {
+it("parseReplayOptions --no-reset overrides env default", () => {
   const opts = parseReplayOptions(["--no-reset"], true)
   expect(opts.reset).toBe(false)
 })
 
-test("parseReplayOptions throws on missing --entity-id value", () => {
+it("parseReplayOptions throws on missing --entity-id value", () => {
   expect(() => parseReplayOptions(["--entity-id"], false)).toThrow("requires a value")
 })
 
-test("parseReplayOptions throws on missing --min-revision value", () => {
+it("parseReplayOptions throws on missing --min-revision value", () => {
   expect(() => parseReplayOptions(["--min-revision"], false)).toThrow("requires a value")
 })
 
-test("parseReplayOptions throws on negative revision", () => {
+it("parseReplayOptions throws on negative revision", () => {
   expect(() => parseReplayOptions(["--min-revision", "-1"], false)).toThrow()
 })
 
-test("parseReplayOptions throws when min > max revision", () => {
+it("parseReplayOptions throws when min > max revision", () => {
   expect(() => parseReplayOptions(["--min-revision", "10", "--max-revision", "5"], false)).toThrow("cannot be greater than")
 })
 
-test("parseReplayOptions throws on unknown flag", () => {
+it("parseReplayOptions throws on unknown flag", () => {
   expect(() => parseReplayOptions(["--unknown"], false)).toThrow("Unknown replay flag")
 })
 
-test("parseReplayOptions parses all options together", () => {
+it("parseReplayOptions parses all options together", () => {
   const opts = parseReplayOptions([
     "--entity-id", "e-1",
     "--min-revision", "3",
@@ -111,32 +111,30 @@ test("parseReplayOptions parses all options together", () => {
   expect(opts.reset).toBe(false)
 })
 
-test("makeReplayProgram filters entries and skips dispatch in dry-run mode", async () => {
+it.effect("makeReplayProgram filters entries and skips dispatch in dry-run mode", () => Effect.gen(function* () {
   const dispatched: Array<string> = []
   const resetCalls: Array<string> = []
 
-  const summary = await Effect.runPromise(
-    makeReplayProgram({
-      argv: ["--entity-id", "entity-1", "--min-revision", "2", "--dry-run"],
-      resetDefault: true,
-      label: "test projection",
-      entries: Effect.succeed([
-        makeEntry("entity-1", 1),
-        makeEntry("entity-1", 2),
-        makeEntry("entity-2", 3)
-      ]),
-      decodeEvent: decodeTestEvent,
-      entityIdOf: (event) => event.entityId,
-      dispatch: (event: TestReplayEvent) =>
-        Effect.sync(() => {
-          dispatched.push(`${event.entityId}:${event.revision}`)
-        }),
-      eventGroup: TestEventGroup,
-      reset: Effect.sync(() => {
-        resetCalls.push("reset")
-      })
+  const summary = yield* makeReplayProgram({
+    argv: ["--entity-id", "entity-1", "--min-revision", "2", "--dry-run"],
+    resetDefault: true,
+    label: "test projection",
+    entries: Effect.succeed([
+      makeEntry("entity-1", 1),
+      makeEntry("entity-1", 2),
+      makeEntry("entity-2", 3)
+    ]),
+    decodeEvent: decodeTestEvent,
+    entityIdOf: (event) => event.entityId,
+    dispatch: (event: TestReplayEvent) =>
+      Effect.sync(() => {
+        dispatched.push(`${event.entityId}:${event.revision}`)
+      }),
+    eventGroup: TestEventGroup,
+    reset: Effect.sync(() => {
+      resetCalls.push("reset")
     })
-  )
+  })
 
   expect(summary.collected).toBe(1)
   expect(summary.dispatched).toBe(0)
@@ -144,35 +142,33 @@ test("makeReplayProgram filters entries and skips dispatch in dry-run mode", asy
   expect(summary.options.dryRun).toBe(true)
   expect(dispatched).toEqual([])
   expect(resetCalls).toEqual([])
-})
+}))
 
-test("makeReplayProgram resets and dispatches matching events sequentially", async () => {
+it.effect("makeReplayProgram resets and dispatches matching events sequentially", () => Effect.gen(function* () {
   const calls: Array<string> = []
 
-  const summary = await Effect.runPromise(
-    makeReplayProgram({
-      argv: ["--entity-id", "entity-1"],
-      resetDefault: true,
-      label: "test projection",
-      entries: Effect.succeed([
-        makeEntry("entity-1", 1),
-        makeEntry("entity-1", 2),
-        makeEntry("entity-2", 3)
-      ]),
-      decodeEvent: decodeTestEvent,
-      entityIdOf: (event) => event.entityId,
-      dispatch: (event: TestReplayEvent) =>
-        Effect.sync(() => {
-          calls.push(`dispatch:${event.revision}`)
-        }),
-      eventGroup: TestEventGroup,
-      reset: Effect.sync(() => {
-        calls.push("reset")
-      })
+  const summary = yield* makeReplayProgram({
+    argv: ["--entity-id", "entity-1"],
+    resetDefault: true,
+    label: "test projection",
+    entries: Effect.succeed([
+      makeEntry("entity-1", 1),
+      makeEntry("entity-1", 2),
+      makeEntry("entity-2", 3)
+    ]),
+    decodeEvent: decodeTestEvent,
+    entityIdOf: (event) => event.entityId,
+    dispatch: (event: TestReplayEvent) =>
+      Effect.sync(() => {
+        calls.push(`dispatch:${event.revision}`)
+      }),
+    eventGroup: TestEventGroup,
+    reset: Effect.sync(() => {
+      calls.push("reset")
     })
-  )
+  })
 
   expect(summary.collected).toBe(2)
   expect(summary.dispatched).toBe(2)
   expect(calls).toEqual(["reset", "dispatch:1", "dispatch:2"])
-})
+}))

@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Root from "@semyenov/n2"
 import * as Helpers from "@semyenov/n2/helpers"
 import * as Runtime from "@semyenov/n2/runtime"
@@ -9,7 +9,7 @@ import * as LegacyMain from "@semyenov/n2/src/main"
 import * as LegacyHelpers from "@semyenov/n2/framework/helpers"
 import * as LegacyHelpersIndex from "@semyenov/n2/framework/helpers/index.js"
 
-test("package exports support current and documented legacy import paths", () => {
+it("package exports support current and documented legacy import paths", () => {
   expect(typeof Root.Helpers.define).toBe("function")
   expect(typeof Helpers.define).toBe("function")
   expect(typeof Helpers.makeOutboxJsonService).toBe("function")

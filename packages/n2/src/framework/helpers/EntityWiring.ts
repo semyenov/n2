@@ -1,6 +1,9 @@
 import * as Effect from "effect/Effect"
 import * as Schedule from "effect/Schedule"
+import * as Schema from "effect/Schema"
 import * as EventLogApi from "@effect/experimental/EventLog"
+import * as EventJournalApi from "@effect/experimental/EventJournal"
+import type * as Context from "effect/Context"
 
 /**
  * Map-based dedupe by a key function. Later entries overwrite earlier ones.
@@ -72,6 +75,49 @@ export interface AfterCommitPublisherConfig<EventLogSchema> {
   readonly retry?: Schedule.Schedule<unknown, unknown>
 }
 
+type WriteThroughProjectionStore<Event> = {
+  readonly dispatch: (event: Event) => Effect.Effect<void, unknown, unknown>
+}
+
+type WriteThroughOutbox<Message> = {
+  readonly enqueue: (message: Message) => Effect.Effect<void, unknown, unknown>
+}
+
+type ProjectionStoreContext<Store, Event> =
+  Store extends { readonly dispatch: (event: Event) => Effect.Effect<void, unknown, infer R> }
+    ? R
+    : never
+
+type OutboxContext<Outbox, Message> =
+  Outbox extends { readonly enqueue: (message: Message) => Effect.Effect<void, unknown, infer R> }
+    ? R
+    : never
+
+type RuntimeEventDefinition<Event> = {
+  readonly primaryKey: (payload: Event) => string
+  readonly payloadMsgPack: Schema.Schema.Any
+}
+
+type WriteThroughEventGroup = {
+  readonly events: Readonly<Record<string, unknown>>
+}
+
+export interface WriteThroughAfterCommitPublisherConfig<
+  Event extends { readonly _tag: string },
+  StoreI,
+  Store extends WriteThroughProjectionStore<Event>,
+  Message = never,
+  OutboxI = never,
+  Outbox extends WriteThroughOutbox<Message> = WriteThroughOutbox<Message>
+> {
+  readonly group: WriteThroughEventGroup
+  readonly storeTag: Context.Tag<StoreI, Store>
+  readonly outboxTag?: Context.Tag<OutboxI, Outbox>
+  readonly makeMessage?: (event: Event) => Message
+  readonly logPrefix: string
+  readonly retry?: Schedule.Schedule<unknown, unknown>
+}
+
 /**
  * Build an `afterCommit` handler that publishes each emitted event via
  * `EventLogApi.makeClient(schema)` and retries the whole batch on failure.
@@ -101,3 +147,74 @@ export const makeAfterCommitPublisher = <
       Effect.logError(`${config.logPrefix} event publish failed: ${String(error)}`)
     )
   )
+
+/**
+ * Write emitted events directly through the EventJournal, projection store, and
+ * outbox without EventLog's process-wide write semaphore. The EventJournal still
+ * wraps each event write and projection/outbox side effects in its SQL
+ * transaction, while callers can keep same-entity ordering with their own
+ * entity lock.
+ */
+export const makeWriteThroughAfterCommitPublisher = <
+  Event extends { readonly _tag: string },
+  StoreI,
+  Store extends WriteThroughProjectionStore<Event>,
+  Message = never,
+  OutboxI = never,
+  Outbox extends WriteThroughOutbox<Message> = WriteThroughOutbox<Message>
+>(
+  config: WriteThroughAfterCommitPublisherConfig<Event, StoreI, Store, Message, OutboxI, Outbox>
+) => {
+  type Requirements =
+    | EventJournalApi.EventJournal
+    | StoreI
+    | ProjectionStoreContext<Store, Event>
+    | OutboxI
+    | OutboxContext<Outbox, Message>
+
+  return (input: { readonly events: ReadonlyArray<Event> }): Effect.Effect<
+    void,
+    unknown,
+    Requirements
+  > =>
+    Effect.gen(function* () {
+      const journal = yield* EventJournalApi.EventJournal
+      const store = yield* config.storeTag
+      const outbox = config.outboxTag === undefined
+        ? undefined
+        : yield* config.outboxTag
+
+      yield* Effect.forEach(
+        input.events,
+        (event) =>
+          Effect.gen(function* () {
+            const eventDefinition = config.group.events[event._tag] as RuntimeEventDefinition<Event> | undefined
+            if (eventDefinition === undefined) {
+              return yield* Effect.fail(new Error(`Event definition not found for "${event._tag}"`))
+            }
+            const payload = yield* Schema.encode(
+              eventDefinition.payloadMsgPack as unknown as Schema.Schema<Event, Uint8Array>
+            )(event)
+
+            yield* journal.write({
+              event: event._tag,
+              primaryKey: eventDefinition.primaryKey(event),
+              payload,
+              effect: () =>
+                Effect.gen(function* () {
+                  yield* (store.dispatch(event) as Effect.Effect<void, unknown, ProjectionStoreContext<Store, Event>>)
+                  if (outbox !== undefined && config.makeMessage !== undefined) {
+                    yield* (outbox.enqueue(config.makeMessage(event)) as Effect.Effect<void, unknown, OutboxContext<Outbox, Message>>)
+                  }
+                })
+            })
+          }),
+        { discard: true }
+      )
+    }).pipe(
+      Effect.retry(config.retry ?? standardPublishRetry),
+      Effect.tapError((error) =>
+        Effect.logError(`${config.logPrefix} write-through publish failed: ${String(error)}`)
+      )
+    ) as Effect.Effect<void, unknown, Requirements>
+}

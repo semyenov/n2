@@ -13,7 +13,7 @@
  * calls handler functions from the Layer in-process. Requires Scope (from
  * Effect.scoped) + Rpc.ToHandler<Rpcs> (from handlersLayer).
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
@@ -115,7 +115,7 @@ const runWith = <A, E, R>(
 // 1 — Pure aggregate: handle / evolve
 // ---------------------------------------------------------------------------
 
-test("CreateOrder produces draft state", async () => {
+it("CreateOrder produces draft state", async () => {
   const { state, events } = await run(
     handle(initialOrderState, new CreateOrder({ orderId: "o-1", customerId: "c-1" }))
   )
@@ -126,7 +126,7 @@ test("CreateOrder produces draft state", async () => {
   expect(events[0]!._tag).toBe("OrderCreated")
 })
 
-test("AddItem accumulates items and totalAmount", async () => {
+it("AddItem accumulates items and totalAmount", async () => {
   const { state: s1 } = await run(handle(initialOrderState, new CreateOrder({ orderId: "o-2", customerId: "c-1" })))
   const { state: s2 } = await run(handle(s1, new AddItem({ orderId: "o-2", sku: "A", quantity: 2, price: 10 })))
   const { state: s3 } = await run(handle(s2, new AddItem({ orderId: "o-2", sku: "B", quantity: 1, price: 5 })))
@@ -134,7 +134,7 @@ test("AddItem accumulates items and totalAmount", async () => {
   expect(s3.totalAmount).toBe(25)
 })
 
-test("SubmitOrder with items produces submitted state", async () => {
+it("SubmitOrder with items produces submitted state", async () => {
   const { state: s1 } = await run(handle(initialOrderState, new CreateOrder({ orderId: "o-3", customerId: "c-1" })))
   const { state: s2 } = await run(handle(s1, new AddItem({ orderId: "o-3", sku: "X", quantity: 1, price: 1 })))
   const { state, events } = await run(handle(s2, new SubmitOrder({ orderId: "o-3" })))
@@ -142,20 +142,20 @@ test("SubmitOrder with items produces submitted state", async () => {
   expect(events[0]!._tag).toBe("OrderSubmitted")
 })
 
-test("SubmitOrder with no items fails with OrderError", async () => {
+it("SubmitOrder with no items fails with OrderError", async () => {
   const { state: s1 } = await run(handle(initialOrderState, new CreateOrder({ orderId: "o-4", customerId: "c-1" })))
   const err = await run(handle(s1, new SubmitOrder({ orderId: "o-4" })).pipe(Effect.flip))
   expect(err._tag).toBe("OrderError")
   expect((err as OrderError).message).toMatch(/no items/)
 })
 
-test("CreateOrder on existing order fails", async () => {
+it("CreateOrder on existing order fails", async () => {
   const { state: s1 } = await run(handle(initialOrderState, new CreateOrder({ orderId: "o-5", customerId: "c-1" })))
   const err = await run(handle(s1, new CreateOrder({ orderId: "o-5", customerId: "c-2" })).pipe(Effect.flip))
   expect(err._tag).toBe("OrderError")
 })
 
-test("CancelOrder on cancelled order fails", async () => {
+it("CancelOrder on cancelled order fails", async () => {
   const { state: s1 } = await run(handle(initialOrderState, new CreateOrder({ orderId: "o-6", customerId: "c-1" })))
   const { state: s2 } = await run(handle(s1, new CancelOrder({ orderId: "o-6", reason: "reason" })))
   expect(s2.status).toBe("cancelled")
@@ -171,7 +171,7 @@ test("CancelOrder on cancelled order fails", async () => {
 // Each test gets its own makeTestLayers() call → fresh SynchronizedRef + Map.
 // ---------------------------------------------------------------------------
 
-test("handlers: Create → AddItem → GetOrder persists state", async () => {
+it("handlers: Create → AddItem → GetOrder persists state", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(OrderRpcs)
@@ -184,7 +184,7 @@ test("handlers: Create → AddItem → GetOrder persists state", async () => {
   }))
 })
 
-test("handlers: Submit changes status to submitted", async () => {
+it("handlers: Submit changes status to submitted", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(OrderRpcs)
@@ -197,7 +197,7 @@ test("handlers: Submit changes status to submitted", async () => {
   }))
 })
 
-test("handlers: GetOrder for unknown order returns OrderNotFound", async () => {
+it("handlers: GetOrder for unknown order returns OrderNotFound", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(OrderRpcs)
@@ -209,7 +209,7 @@ test("handlers: GetOrder for unknown order returns OrderNotFound", async () => {
   }))
 })
 
-test("handlers: SubmitOrder with no items fails", async () => {
+it("handlers: SubmitOrder with no items fails", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(OrderRpcs)
@@ -219,7 +219,7 @@ test("handlers: SubmitOrder with no items fails", async () => {
   }))
 })
 
-test("handlers: Cancel submitted order succeeds", async () => {
+it("handlers: Cancel submitted order succeeds", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(OrderRpcs)
@@ -239,7 +239,7 @@ test("handlers: Cancel submitted order succeeds", async () => {
 // The handler's SynchronizedRef starts empty — it must fall back to the snapshot.
 // ---------------------------------------------------------------------------
 
-test("snapshot recovery: GetOrder loads state from snapshot store", async () => {
+it("snapshot recovery: GetOrder loads state from snapshot store", async () => {
   const { snapshotStore, handlersLayer } = makeTestLayers()
 
   snapshotStore.set("snap-1", {

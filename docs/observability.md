@@ -51,10 +51,25 @@ Run the service smoke test to generate traces, metrics, and logs:
 bun run test:services
 ```
 
+Run the configurable service stress test when you want a denser local telemetry
+sample for the Grafana dashboard:
+
+```bash
+bun run stress:services
+STRESS_ITERATIONS=100 STRESS_CONCURRENCY=10 bun run stress:services
+STRESS_SERVICES=profile-provider bun run stress:services
+```
+
 ## Grafana
 
 Open <http://localhost:3333>. Anonymous local admin access is enabled in
 Compose for development.
+
+Open **Dashboards** -> **N2 Services** -> **N2 Services** for the provisioned
+service dashboard. Use the `Service` variable to switch between
+`profile-provider` and `request-provider`. Run `bun run test:services` after
+the stack is healthy to generate sample command metrics, traces, and logs for
+both services.
 
 Use **Explore** with these datasources:
 
@@ -66,6 +81,9 @@ Use **Explore** with these datasources:
 
 Grafana datasources are provisioned from
 `observability/grafana/provisioning/datasources/datasources.yaml`.
+Grafana dashboards are provisioned from
+`observability/grafana/provisioning/dashboards/dashboards.yaml` and loaded from
+`observability/grafana/dashboards/`.
 
 ## Pipeline
 

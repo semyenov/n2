@@ -4,7 +4,7 @@
  * `makePromiseClient` exposes a callable function for any method name via
  * its Proxy.
  */
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Effect from "effect/Effect"
 import * as Schema from "effect/Schema"
 import { Rpc, RpcGroup } from "@effect/rpc"
@@ -16,7 +16,7 @@ const Echo = Rpc.make("Echo", {
 })
 const TestRpcs = RpcGroup.make(Echo)
 
-test("makeHttpClient returns an Effect", () => {
+it("makeHttpClient returns an Effect", () => {
   const program = makeHttpClient(TestRpcs, "http://localhost:9999/rpc")
   // The returned value should be an Effect; we verify by checking Effect's
   // pipe interface and tag without running (which would attempt a real HTTP call).
@@ -24,7 +24,7 @@ test("makeHttpClient returns an Effect", () => {
   expect(Effect.isEffect(program)).toBe(true)
 })
 
-test("makePromiseClient returns a function for any method name via Proxy", () => {
+it("makePromiseClient returns a function for any method name via Proxy", () => {
   const client = makePromiseClient(TestRpcs, "http://localhost:9999/rpc")
   // Proxy returns a function for any property access; the caller hasn't yet
   // invoked it, so no network call is made.

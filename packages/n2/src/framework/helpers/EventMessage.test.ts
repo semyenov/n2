@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Schema from "effect/Schema"
 import { makeEventMessage, makeEventMessageFields } from "./EventMessage.js"
 
@@ -6,7 +6,7 @@ class TestEventMessage extends Schema.Class<TestEventMessage>("TestEventMessage"
   ...makeEventMessageFields("entityId")
 }) {}
 
-test("makeEventMessage builds standard publication metadata", () => {
+it("makeEventMessage builds standard publication metadata", () => {
   const message = new TestEventMessage(makeEventMessage({
     topic: "test.events",
     entityIdKey: "entityId",

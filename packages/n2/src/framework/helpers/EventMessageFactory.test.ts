@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 import * as Schema from "effect/Schema"
 import { makeEventMessageFields } from "./EventMessage.js"
 import { makeEventMessageFactory } from "./EventMessageFactory.js"
@@ -13,7 +13,7 @@ const makeProfileMessage = makeEventMessageFactory({
   schema: ProfileEventMessage
 })
 
-test("makeEventMessageFactory threads entityId through to schema instance", () => {
+it("makeEventMessageFactory threads entityId through to schema instance", () => {
   const message = makeProfileMessage({
     profileId: "00000000-0000-4000-8000-000000000001",
     revision: 7,
@@ -40,7 +40,7 @@ test("makeEventMessageFactory threads entityId through to schema instance", () =
   })
 })
 
-test("makeEventMessageFactory passes headers through", () => {
+it("makeEventMessageFactory passes headers through", () => {
   const message = makeProfileMessage({
     profileId: "00000000-0000-4000-8000-000000000001",
     revision: 1,
