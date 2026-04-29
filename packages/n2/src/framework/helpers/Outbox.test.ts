@@ -2,9 +2,12 @@
  * Framework-level unit tests for Outbox helpers.
  */
 import { test, expect } from "bun:test"
+import * as Cause from "effect/Cause"
 import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
+import * as Exit from "effect/Exit"
 import * as Layer from "effect/Layer"
+import { ParseError } from "effect/ParseResult"
 import * as Schema from "effect/Schema"
 import { SqlClient, type SqlClient as SqlClientInstance } from "@effect/sql/SqlClient"
 import { computeRetryDelaySeconds } from "./Outbox.js"
@@ -92,4 +95,54 @@ test("makeOutboxJsonService encodes and decodes schema messages", async () => {
   expect(claimed[0]?.message).toBeInstanceOf(TestMessage)
   expect(claimed[0]?.message.count).toBe(2)
   expect(claimed[0]?.retryCount).toBe(3)
+})
+
+test("claimPending surfaces ParseError as a typed failure on malformed payload_json", async () => {
+  type FakeSql = {
+    (strings: TemplateStringsArray | string, ...params: ReadonlyArray<unknown>): unknown
+    withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>
+  }
+
+  const malformed = JSON.stringify({ id: "msg-bad", count: "not-a-number" })
+
+  const fakeSql = Object.assign(((strings: TemplateStringsArray | string, ..._params: ReadonlyArray<unknown>) => {
+    if (typeof strings === "string") return { identifier: strings }
+    const text = strings.join("?")
+    if (text.includes("RETURNING id, payload_json, retry_count")) {
+      return Effect.succeed([{ id: "msg-bad", payload_json: malformed, retry_count: 0 }])
+    }
+    return Effect.succeed([])
+  }) as FakeSql, {
+    withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) => effect
+  })
+
+  const outbox = makeOutboxJsonService({
+    table: "test_outbox",
+    schema: TestMessage,
+    idOf: (message: TestMessage) => message.id
+  })
+
+  const layer = Layer.provide(
+    outbox.makeLive(TestOutbox),
+    Layer.succeed(SqlClient, fakeSql as unknown as SqlClientInstance)
+  )
+
+  const exit = await Effect.runPromiseExit(
+    Effect.gen(function* () {
+      const service = yield* TestOutbox
+      return yield* service.claimPending(1)
+    }).pipe(Effect.provide(layer))
+  )
+
+  expect(Exit.isFailure(exit)).toBe(true)
+  if (Exit.isFailure(exit)) {
+    const failure = Cause.failureOption(exit.cause)
+    expect(failure._tag).toBe("Some")
+    if (failure._tag === "Some") {
+      // ParseError surfaces as a typed failure, not a defect.
+      expect(failure.value).toBeInstanceOf(ParseError)
+    }
+    // Confirm it isn't a defect (which would mean the throw escaped Effect's machinery).
+    expect(Cause.defects(exit.cause).length).toBe(0)
+  }
 })

@@ -13,9 +13,7 @@
  *     Option<DateTime>    → ISO string | null   (via Schema.DateTimeUtc codec)
  *     ReadonlyArray<LineItem> → plain object array
  */
-import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
-import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import { SqlClient } from "@effect/sql/SqlClient"
@@ -78,44 +76,33 @@ const decodeState = (json: string): OrderState => {
 
 export type SnapshotEntry = { readonly state: OrderState; readonly revision: number }
 
-export class OrderSnapshots extends Context.Tag("OrderSnapshots")<
-  OrderSnapshots,
-  {
-    /** Load the latest snapshot for an order. Returns none if no snapshot exists. */
-    readonly load: (orderId: string) => Effect.Effect<Option.Option<SnapshotEntry>, SqlError>
-    /** Persist the current state as the latest snapshot for an order. */
-    readonly save: (orderId: string, state: OrderState, revision: number) => Effect.Effect<void, SqlError>
-  }
->() {}
-
-export const OrderSnapshotsLive = Layer.effect(
-  OrderSnapshots,
-  Effect.gen(function* () {
+export class OrderSnapshots extends Effect.Service<OrderSnapshots>()("OrderSnapshots", {
+  effect: Effect.gen(function* () {
     const sql = yield* SqlClient
 
-    return {
-      load: (orderId) =>
-        sql`
-          SELECT state_json, revision
-          FROM order_snapshots
-          WHERE order_id = ${orderId}
-        `.pipe(
-          Effect.map((rows) => {
-            const row = rows[0] as { state_json: string; revision: number } | undefined
-            if (!row) return Option.none<SnapshotEntry>()
-            return Option.some({ state: decodeState(row.state_json), revision: row.revision })
-          })
-        ),
+    const load = (orderId: string): Effect.Effect<Option.Option<SnapshotEntry>, SqlError> =>
+      sql`
+        SELECT state_json, revision
+        FROM order_snapshots
+        WHERE order_id = ${orderId}
+      `.pipe(
+        Effect.map((rows) => {
+          const row = rows[0] as { state_json: string; revision: number } | undefined
+          if (!row) return Option.none<SnapshotEntry>()
+          return Option.some({ state: decodeState(row.state_json), revision: row.revision })
+        })
+      )
 
-      save: (orderId, state, revision) =>
-        sql`
-          INSERT INTO order_snapshots (order_id, state_json, revision, saved_at)
-          VALUES (${orderId}, ${encodeState(state)}, ${revision}, ${new Date().toISOString()})
-          ON CONFLICT (order_id) DO UPDATE SET
-            state_json = EXCLUDED.state_json,
-            revision   = EXCLUDED.revision,
-            saved_at   = EXCLUDED.saved_at
-        `.pipe(Effect.asVoid)
-    }
+    const save = (orderId: string, state: OrderState, revision: number): Effect.Effect<void, SqlError> =>
+      sql`
+        INSERT INTO order_snapshots (order_id, state_json, revision, saved_at)
+        VALUES (${orderId}, ${encodeState(state)}, ${revision}, ${new Date().toISOString()})
+        ON CONFLICT (order_id) DO UPDATE SET
+          state_json = EXCLUDED.state_json,
+          revision   = EXCLUDED.revision,
+          saved_at   = EXCLUDED.saved_at
+      `.pipe(Effect.asVoid)
+
+    return { load, save }
   })
-)
+}) {}

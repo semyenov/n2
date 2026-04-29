@@ -20,6 +20,7 @@ import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Metric from "effect/Metric"
 import * as Option from "effect/Option"
+import type { ParseError } from "effect/ParseResult"
 import * as Schema from "effect/Schema"
 import type * as Context from "effect/Context"
 import { SqlClient } from "@effect/sql/SqlClient"
@@ -31,8 +32,8 @@ export interface SnapshotEntry<State> {
 }
 
 export interface SnapshotService<State> {
-  readonly load: (entityId: string) => Effect.Effect<Option.Option<SnapshotEntry<State>>, SqlError>
-  readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, SqlError>
+  readonly load: (entityId: string) => Effect.Effect<Option.Option<SnapshotEntry<State>>, SqlError | ParseError>
+  readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, SqlError | ParseError>
 }
 
 /**
@@ -64,8 +65,8 @@ export const makeSnapshotService = <State, Encoded>(config: {
   /** Optional metrics prefix. When set, emits `{prefix}.load.duration_ms` and `{prefix}.save.duration_ms` timers. */
   readonly metrics?: { readonly prefix: string }
 }) => {
-  const encode = Schema.encodeSync(config.stateSchema)
-  const decode = Schema.decodeUnknownSync(config.stateSchema)
+  const encode = Schema.encode(config.stateSchema)
+  const decode = Schema.decodeUnknown(config.stateSchema)
   const idCol = config.idColumn ?? "entity_id"
   const meters = config.metrics
     ? {
@@ -85,28 +86,35 @@ export const makeSnapshotService = <State, Encoded>(config: {
         Effect.gen(function* () {
           const sql = yield* SqlClient
 
-          const rawLoad = (entityId: string) =>
+          const rawLoad = (entityId: string): Effect.Effect<Option.Option<SnapshotEntry<State>>, SqlError | ParseError> =>
             sql`
               SELECT state_json, revision
               FROM ${sql(config.table)}
               WHERE ${sql(idCol)} = ${entityId}
             `.pipe(
-              Effect.map((rows) => {
+              Effect.flatMap((rows) => {
                 const row = rows[0] as { state_json: string; revision: number } | undefined
-                if (!row) return Option.none<SnapshotEntry<State>>()
-                return Option.some({ state: decode(JSON.parse(row.state_json)), revision: row.revision })
+                if (!row) return Effect.succeed(Option.none<SnapshotEntry<State>>())
+                return decode(JSON.parse(row.state_json)).pipe(
+                  Effect.map((state) => Option.some<SnapshotEntry<State>>({ state, revision: row.revision }))
+                )
               })
             )
 
-          const rawSave = (entityId: string, state: State, revision: number) =>
-            sql`
-              INSERT INTO ${sql(config.table)} (${sql(idCol)}, state_json, revision, saved_at)
-              VALUES (${entityId}, ${JSON.stringify(encode(state))}, ${revision}, ${new Date().toISOString()})
-              ON CONFLICT (${sql(idCol)}) DO UPDATE SET
-                state_json = EXCLUDED.state_json,
-                revision = EXCLUDED.revision,
-                saved_at = EXCLUDED.saved_at
-            `.pipe(Effect.asVoid)
+          const rawSave = (entityId: string, state: State, revision: number): Effect.Effect<void, SqlError | ParseError> =>
+            encode(state).pipe(
+              Effect.flatMap((encoded) =>
+                sql`
+                  INSERT INTO ${sql(config.table)} (${sql(idCol)}, state_json, revision, saved_at)
+                  VALUES (${entityId}, ${JSON.stringify(encoded)}, ${revision}, ${new Date().toISOString()})
+                  ON CONFLICT (${sql(idCol)}) DO UPDATE SET
+                    state_json = EXCLUDED.state_json,
+                    revision = EXCLUDED.revision,
+                    saved_at = EXCLUDED.saved_at
+                `
+              ),
+              Effect.asVoid
+            )
 
           return {
             load: meters

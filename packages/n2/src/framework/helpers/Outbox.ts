@@ -40,6 +40,7 @@ import type * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Metric from "effect/Metric"
+import type { ParseError } from "effect/ParseResult"
 import * as Schema from "effect/Schema"
 import type { DurationInput } from "effect/Duration"
 import { SqlClient, type SqlClient as SqlClientInstance } from "@effect/sql/SqlClient"
@@ -52,8 +53,8 @@ export interface OutboxEntry<Message> {
 }
 
 export interface OutboxService<Message> {
-  readonly enqueue: (message: Message) => Effect.Effect<void, SqlError>
-  readonly claimPending: (limit: number) => Effect.Effect<ReadonlyArray<OutboxEntry<Message>>, SqlError>
+  readonly enqueue: (message: Message) => Effect.Effect<void, SqlError | ParseError>
+  readonly claimPending: (limit: number) => Effect.Effect<ReadonlyArray<OutboxEntry<Message>>, SqlError | ParseError>
   readonly markDispatched: (id: string) => Effect.Effect<void, SqlError>
   readonly markFailed: (id: string, retryCount: number, error: string) => Effect.Effect<void, SqlError>
   readonly markDeadLetter: (id: string, error: string) => Effect.Effect<void, SqlError>
@@ -72,8 +73,8 @@ type OutboxRow = {
 interface OutboxConfig<Message> {
   readonly table: string
   readonly idOf: (message: Message) => string
-  readonly serialize: (message: Message) => string
-  readonly deserialize: (json: string) => Message
+  readonly serialize: (message: Message) => Effect.Effect<string, ParseError>
+  readonly deserialize: (json: string) => Effect.Effect<Message, ParseError>
   /** Optional metrics prefix. When set, emits counters for dispatch, errors, and dead letters. */
   readonly metrics?: { readonly prefix: string }
 }
@@ -89,23 +90,24 @@ export interface OutboxJsonConfig<Message, Encoded> {
 const nowIso = () => new Date().toISOString()
 
 const makeEnqueue = <Message>(sql: SqlClientInstance, config: OutboxConfig<Message>) =>
-  (message: Message) => {
-    const now = nowIso()
-    const id = config.idOf(message)
-    const payloadJson = config.serialize(message)
-    return sql`
-      INSERT INTO ${sql(config.table)}
-        (id, payload_json, status, retry_count, last_error, created_at, updated_at, published_at, next_attempt_at)
-      VALUES (
-        ${id}, ${payloadJson}, ${"pending"}, ${0}, ${""},
-        ${now}, ${now}, ${""}, ${""}
-      )
-      ON CONFLICT (id) DO NOTHING
-    `.pipe(Effect.asVoid)
-  }
+  (message: Message): Effect.Effect<void, SqlError | ParseError> =>
+    Effect.gen(function* () {
+      const now = nowIso()
+      const id = config.idOf(message)
+      const payloadJson = yield* config.serialize(message)
+      yield* sql`
+        INSERT INTO ${sql(config.table)}
+          (id, payload_json, status, retry_count, last_error, created_at, updated_at, published_at, next_attempt_at)
+        VALUES (
+          ${id}, ${payloadJson}, ${"pending"}, ${0}, ${""},
+          ${now}, ${now}, ${""}, ${""}
+        )
+        ON CONFLICT (id) DO NOTHING
+      `
+    })
 
 const makeClaimPending = <Message>(sql: SqlClientInstance, config: OutboxConfig<Message>) =>
-  (limit: number) => {
+  (limit: number): Effect.Effect<ReadonlyArray<OutboxEntry<Message>>, SqlError | ParseError> => {
     const now = nowIso()
     return sql.withTransaction(
       sql<OutboxRow>`
@@ -123,11 +125,17 @@ const makeClaimPending = <Message>(sql: SqlClientInstance, config: OutboxConfig<
         WHERE id IN (SELECT id FROM candidates)
         RETURNING id, payload_json, retry_count
       `.pipe(
-        Effect.map((rows) => rows.map((row): OutboxEntry<Message> => ({
-          id: row.id,
-          retryCount: row.retry_count,
-          message: config.deserialize(row.payload_json)
-        })))
+        Effect.flatMap((rows) =>
+          Effect.forEach(rows, (row) =>
+            config.deserialize(row.payload_json).pipe(
+              Effect.map((message): OutboxEntry<Message> => ({
+                id: row.id,
+                retryCount: row.retry_count,
+                message
+              }))
+            )
+          )
+        )
       )
     )
   }
@@ -303,13 +311,13 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => {
         yield* Effect.sleep(idleDelay)
       }
       return yield* loop
-    }) as Effect.Effect<never, never, I | PublishR>
+    })
 
     return Layer.scopedDiscard(
       Effect.forkScoped(
         loop.pipe(Effect.onInterrupt(() => Effect.logInfo("outbox worker shutting down")))
       ).pipe(Effect.asVoid)
-    ) as Layer.Layer<never, never, I | PublishR>
+    )
   }
 })
 }
@@ -324,13 +332,13 @@ export const makeOutboxService = <Message>(config: OutboxConfig<Message>) => {
 export const makeOutboxJsonService = <Message, Encoded>(
   config: OutboxJsonConfig<Message, Encoded>
 ) => {
-  const encode = Schema.encodeSync(config.schema)
-  const decode = Schema.decodeUnknownSync(config.schema)
+  const encode = Schema.encode(config.schema)
+  const decode = Schema.decodeUnknown(config.schema)
 
   return makeOutboxService({
     table: config.table,
     idOf: config.idOf,
-    serialize: (message) => JSON.stringify(encode(message)),
+    serialize: (message) => encode(message).pipe(Effect.map((encoded) => JSON.stringify(encoded))),
     deserialize: (json) => decode(JSON.parse(json)),
     metrics: config.metrics
   })

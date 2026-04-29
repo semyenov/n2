@@ -150,3 +150,4 @@ examples/order/               Order example (6 commands, sagas, projections, clu
 - Projection stores use per-event typed methods (not a single `project()` that switches on `_tag`)
 - Event metadata (occurredAt field mapping) is declared in contracts.ts alongside event definitions
 - Outbox is decoupled from projections — projector enqueues, store only handles read model mutations
+- New non-generic services should use the `Effect.Service` class pattern (Effect 3.9+): `class MyService extends Effect.Service<MyService>()("MyService", { effect: ... }) {}`. Generic services like `OutboxService<Message>` and `SnapshotService<State>` continue to use the `Context.Tag + makeLive` factory pattern — `Effect.Service` doesn't model type parameters cleanly

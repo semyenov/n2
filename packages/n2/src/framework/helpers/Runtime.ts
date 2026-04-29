@@ -14,6 +14,21 @@ import { PgClient } from "@effect/sql-pg"
 import { WorkflowEngine } from "@effect/workflow"
 import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
 
+export {
+  makeServerEntrypoint,
+  type ServerEntrypointConfig
+} from "./ServerEntrypoint.js"
+
+export {
+  makeClusterEntrypoint,
+  type ClusterEntrypointConfig
+} from "./ClusterEntrypoint.js"
+
+export {
+  makeReplayInfrastructureLayer,
+  type ReplayInfrastructureConfig
+} from "./ReplayLayer.js"
+
 export type MigrationGlob = Record<string, () => Promise<unknown>>
 
 export const makeMigrationsLayer = (migrations: MigrationGlob) => {

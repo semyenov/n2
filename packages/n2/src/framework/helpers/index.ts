@@ -118,3 +118,27 @@ export {
   type ReplayProgramConfig,
   type ReplayProgramSummary
 } from "./Replay.js"
+
+export {
+  makeEventMessageFactory,
+  type EventMessageFactoryConfig,
+  type EventMessageFactoryOptions
+} from "./EventMessageFactory.js"
+
+export {
+  mergeAssetsByKey,
+  makeToError,
+  standardPublishRetry,
+  makeStateOverride,
+  makeAfterCommitPublisher,
+  type StateOverrideConfig,
+  type StateOverrideContext,
+  type AfterCommitPublisherConfig
+} from "./EntityWiring.js"
+
+export {
+  makeProjectionLayer,
+  type ProjectionHandlerEntry,
+  type ProjectionHandlerMap,
+  type ProjectionLayerConfig
+} from "./ProjectionLayer.js"
