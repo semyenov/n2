@@ -7,6 +7,7 @@ COPY packages/n2/package.json ./packages/n2/package.json
 COPY examples/order/package.json ./examples/order/package.json
 COPY services/profile-provider/package.json ./services/profile-provider/package.json
 COPY services/request-provider/package.json ./services/request-provider/package.json
+COPY services/pii-provider/package.json ./services/pii-provider/package.json
 
 RUN bun install --frozen-lockfile
 

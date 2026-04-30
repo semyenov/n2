@@ -1,12 +1,15 @@
 import { makeFetchClient } from "@semyenov/n2/helpers"
 import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts/commands.js"
 import { RequestProviderRpcs } from "../services/request-provider/src/contracts/commands.js"
+import { PIIProviderRpcs } from "../services/pii-provider/src/contracts/commands.js"
 
 const profileBaseUrl = process.env.PROFILE_PROVIDER_BASE_URL ?? "http://127.0.0.1:4100"
 const requestBaseUrl = process.env.REQUEST_PROVIDER_BASE_URL ?? "http://127.0.0.1:4110"
+const piiBaseUrl = process.env.PII_PROVIDER_BASE_URL ?? "http://127.0.0.1:4120"
 
 const profileClient = makeFetchClient(ProfileProviderRpcs, `${profileBaseUrl}/rpc/profile-provider`)
 const requestClient = makeFetchClient(RequestProviderRpcs, `${requestBaseUrl}/rpc/request-provider`)
+const piiClient = makeFetchClient(PIIProviderRpcs, `${piiBaseUrl}/rpc/pii-provider`)
 
 const makeUuid = () => crypto.randomUUID()
 
@@ -98,12 +101,12 @@ const json = (value: unknown) => JSON.stringify(value)
 
 const makeProfileDocument = (profileId: string, position = "Senior TypeScript Engineer") => ({
   uuid: profileId,
-  created_at: "2026-01-01T00:00:00.000Z",
+  createdAt: "2026-01-01T00:00:00.000Z",
   updated_at: "2026-01-02T00:00:00.000Z",
   user_data: {
     personal_info: {
-      first_name: "Ada",
-      last_name: "Lovelace",
+      firstName: "Ada",
+      lastName: "Lovelace",
       relevant_position: position,
       citizenship: "GB",
       residence: "Berlin",
@@ -185,7 +188,7 @@ const makeProfileDocument = (profileId: string, position = "Senior TypeScript En
 const makeRequestDocument = (requestId: string, position = "Senior TypeScript Engineer") => ({
   id: Math.floor(Math.random() * 1_000_000),
   uuid: requestId,
-  created_at: "2026-01-01T00:00:00.000Z",
+  createdAt: "2026-01-01T00:00:00.000Z",
   updated_at: "2026-01-02T00:00:00.000Z",
   vacancy_data: {
     relevant_position: position,
@@ -237,6 +240,56 @@ const makeRequestDocument = (requestId: string, position = "Senior TypeScript En
     version: 1,
     tags: ["effect", "platform"]
   }
+})
+
+const makePIIRecord = (recordId: string, profileId: string, actorId: string) => ({
+  id: recordId,
+  schemaVersion: "1.0.0",
+  entityReference: {
+    entityId: profileId,
+    entityType: "AGGREGATE" as const,
+    entityVersion: 1
+  },
+  jurisdiction: {
+    countryCode: "RU",
+    applicableLaws: ["152-FZ" as const],
+    dataResidency: "RU"
+  },
+  personalIdentity: {
+    fullName: {
+      firstName: "Ada",
+      lastName: "Lovelace"
+    },
+    citizenship: ["RU"]
+  },
+  contactData: {
+    phones: [{ number: "+79001234567", type: "MOBILE" as const, verified: true }],
+    emails: [{ address: "ada@example.test", type: "WORK" as const, verified: true }]
+  },
+  consent: {
+    given: true,
+    givenAt: "2026-01-01T00:00:00.000Z",
+    consentVersion: "1.0",
+    purposes: ["PROFILE_MATCHING" as const],
+    withdrawalRequested: false
+  },
+  dataSubjectRequests: [],
+  retention: {
+    policyId: "retention-ru-standard",
+    retentionPeriodDays: 1095,
+    legalHold: false
+  },
+  audit: {
+    createdAt: "2026-01-01T00:00:00.000Z",
+    createdBy: actorId,
+    accessCount: 0
+  },
+  extractionInfo: {
+    extractedFields: ["user_data.personal_info.first_name", "user_data.contacts.email"],
+    extractionMethod: "LLM_DETECTION" as const,
+    confidenceScores: { fullName: 0.99, emails: 0.98 }
+  },
+  status: "ACTIVE" as const
 })
 
 const testProfileProvider = async () => {
@@ -310,7 +363,7 @@ const testProfileProvider = async () => {
     profileJson: branchProfileJson,
     metadataJson: json({ source: "smoke-test", stage: "snapshot", reviewer: "qa" }),
     piiStorageKey: `pii/profile/${profileId}/snapshot.json`,
-    piiJson: json({ passport: "masked", tax_id: "masked" }),
+    piiJson: json({ passport: "masked", taxId: "masked" }),
     piiJurisdiction: "DE",
     actorId: "smoke-test-agent",
     summary: "Create profile snapshot from smoke test"
@@ -515,9 +568,81 @@ const testRequestProvider = async () => {
   console.log(`request-provider: complex lifecycle ok (${requestId})`)
 }
 
+const testPIIProvider = async () => {
+  const profileId = makeUuid()
+  const recordId = makeUuid()
+  const actorId = makeUuid()
+  const requestId = makeUuid()
+  const record = makePIIRecord(recordId, profileId, actorId)
+  const storageKey = `aggregate:${profileId}:1`
+
+  const created = await piiClient.CreatePIIRecord({
+    record,
+    actorId: actorId,
+    summary: "Create PII record from smoke test"
+  })
+
+  assertEqual(created.storageKey, storageKey, "pii-provider: CreatePIIRecord returned wrong storage key")
+  assertEqual(created.status, "ACTIVE", "pii-provider: CreatePIIRecord returned wrong status")
+
+  const pii = await piiClient.GetPIIRecord({ storageKey: storageKey })
+  assertEqual(pii.id, recordId, "pii-provider: GetPIIRecord returned wrong record id")
+  assertEqual(
+    pii.personalIdentity?.fullName?.firstName,
+    "Ada",
+    "pii-provider: GetPIIRecord did not decrypt personal identity"
+  )
+  assertEqual(pii.encryption.algorithm, "AES-256-GCM", "pii-provider: encryption metadata missing")
+
+  const consent = await piiClient.UpdatePIIConsent({
+    storageKey: storageKey,
+    given: true,
+    purposes: ["PROFILE_MATCHING", "COMMUNICATION"],
+    consentVersion: "2.0",
+    actorId: actorId
+  })
+  assertEqual(consent.revision, 2, "pii-provider: UpdatePIIConsent should advance revision")
+
+  await piiClient.RecordPIIAccess({
+    storageKey: storageKey,
+    actorId: actorId,
+    actorType: "USER",
+    purpose: "PROFILE_VIEW",
+    success: true
+  })
+  const audit = await piiClient.GetPIIAuditLog({ storageKey: storageKey })
+  assert(audit.total >= 2, "pii-provider: audit log should include create and access")
+
+  const erasure = await piiClient.RequestPIIErasure({
+    storageKey: storageKey,
+    requestId: requestId,
+    reason: "smoke-test erasure",
+    immediate: true,
+    actorId: actorId
+  })
+  assertEqual(erasure.status, "PENDING_DELETION", "pii-provider: erasure request should mark pending deletion")
+
+  const deleted = await piiClient.CompletePIIErasure({
+    storageKey: storageKey,
+    requestId: requestId,
+    actorId: actorId
+  })
+  assertEqual(deleted.status, "DELETED", "pii-provider: erasure completion should delete the record")
+
+  await assertRejectsWithTag(
+    "pii-provider: deleted record read",
+    () => piiClient.GetPIIRecord({ storageKey: storageKey }),
+    "PIINotFound"
+  )
+
+  console.log(`pii-provider: encrypted storage lifecycle ok (${storageKey})`)
+}
+
 await waitForHealth("profile-provider", profileBaseUrl)
 await waitForHealth("request-provider", requestBaseUrl)
+await waitForHealth("pii-provider", piiBaseUrl)
 await testProfileProvider()
 await testRequestProvider()
+await testPIIProvider()
 
 console.log("services: smoke tests passed")
