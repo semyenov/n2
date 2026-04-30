@@ -82,14 +82,17 @@ export const makeObservabilityLayer = (options: ObservabilityOptions): Layer.Lay
         }
       }
 
-      const TracerLayer = Layer.scoped(
-        ObservabilityTracer,
+      const TracerLayer = Layer.unwrapScoped(
         Effect.map(
           OtlpTracer.make({
             url: signalUrl(endpoint, "/v1/traces"),
             resource
           }),
-          Option.some
+          (tracer) =>
+            Layer.mergeAll(
+              Layer.succeed(ObservabilityTracer, Option.some(tracer)),
+              Layer.setTracer(tracer)
+            )
         )
       )
 

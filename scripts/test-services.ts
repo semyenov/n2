@@ -1,6 +1,6 @@
 import { makeFetchClient } from "@semyenov/n2/helpers"
-import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts.js"
-import { RequestProviderRpcs } from "../services/request-provider/src/contracts.js"
+import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts/commands.js"
+import { RequestProviderRpcs } from "../services/request-provider/src/contracts/commands.js"
 
 const profileBaseUrl = process.env.PROFILE_PROVIDER_BASE_URL ?? "http://127.0.0.1:4100"
 const requestBaseUrl = process.env.REQUEST_PROVIDER_BASE_URL ?? "http://127.0.0.1:4110"
