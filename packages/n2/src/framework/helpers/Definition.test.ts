@@ -14,6 +14,7 @@ import * as TestClock from "effect/TestClock"
 import { RpcTest } from "@effect/rpc"
 import { define } from "./Definition.js"
 import { defineCommands, defineEvents } from "./Definitions.js"
+import { eventGroupEventTags } from "./EventGroupAccess.js"
 
 // Minimal test aggregate: counter with Increment and Reset commands
 
@@ -177,7 +178,7 @@ it("initialState is accessible", () => {
 it("defineEvents derives an EventGroup with payload schemas", () => {
   const group = TestEvents.toEventGroup(() => "counter")
 
-  expect(Object.keys(group.events).sort()).toEqual(["Incremented", "WasReset"])
+  expect([...eventGroupEventTags(group)].sort()).toEqual(["Incremented", "WasReset"])
 })
 
 it.effect("stateful RPC handlers serialize the same entity without serializing every entity", () =>

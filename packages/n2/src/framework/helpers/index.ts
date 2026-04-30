@@ -58,6 +58,8 @@ export {
   type TaggedCollection,
   type TaggedConstructor,
   type TaggedConstructors,
+  type TaggedEventDefinition,
+  type TaggedEventGroup,
   type TaggedSchema
 } from "./Definitions.js"
 

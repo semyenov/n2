@@ -10,7 +10,7 @@ import * as Schema from "effect/Schema"
 import { EventGroup } from "@effect/experimental"
 import * as ExpEventJournal from "@effect/experimental/EventJournal"
 import * as MsgPack from "@effect/platform/MsgPack"
-import { eventGroupEvents } from "./EventGroupAccess.js"
+import { eventGroupEvent } from "./EventGroupAccess.js"
 import { makeEventDecoder } from "./EventDecoder.js"
 
 class OrderCreated extends Schema.TaggedClass<OrderCreated>()("OrderCreated", {
@@ -49,10 +49,9 @@ const TestEventGroup = EventGroup.empty
 // Build a journal entry with msgpack-encoded payload via the same schema the
 // decoder uses, so the round trip is realistic.
 const makeEntry = (tag: string, payload: unknown): ExpEventJournal.Entry => {
-  const events = eventGroupEvents(TestEventGroup)
-  const event = events[tag]
+  const event = eventGroupEvent(TestEventGroup, tag)
   if (!event) throw new Error(`unknown tag in test setup: ${tag}`)
-  const bytes = Schema.encodeSync(event.payloadMsgPack as unknown as Schema.Schema<unknown, Uint8Array, never>)(payload as never)
+  const bytes = Schema.encodeSync(event.payloadMsgPack as unknown as Schema.Schema<unknown, Uint8Array, never>)(payload)
   return new ExpEventJournal.Entry({
     id: ExpEventJournal.makeEntryId(),
     event: tag,

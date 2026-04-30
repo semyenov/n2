@@ -307,6 +307,17 @@ Keep encode/decode work at boundaries:
 Event replay is a boundary too. Historical journal entries should be migrated or
 otherwise normalized before decoding into the current event schema.
 
+## Experimental package boundary
+
+N2 currently uses `@effect/experimental` for EventGroup, EventLog, and
+EventJournal only. Keep direct access to EventGroup runtime metadata centralized
+in the framework helpers; service code should prefer `defineEvents(...).toEventGroup(...)`,
+`makeProjectionLayer(...)`, `makeEventDecoder(...)`, and the replay helpers.
+
+Treat other experimental modules as candidates, not defaults. Do not introduce
+DevTools, EventLogRemote, Machine, Persistence, or VariantSchema into core
+runtime wiring without a dedicated plan and compatibility tests.
+
 ## Runtime and service packages
 
 | Package or module | Use in N2 |

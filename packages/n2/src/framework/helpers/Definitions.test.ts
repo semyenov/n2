@@ -8,8 +8,10 @@ import * as Context from "effect/Context"
 import * as Option from "effect/Option"
 import * as Schema from "effect/Schema"
 import { ClusterSchema } from "@effect/cluster"
+import type * as ExperimentalEvent from "@effect/experimental/Event"
+import type * as ExperimentalEventGroup from "@effect/experimental/EventGroup"
 import { defineCommands, defineEvents, eventPayloadSchema } from "./Definitions.js"
-import { eventGroupEvents } from "./EventGroupAccess.js"
+import { eventGroupEvent, eventGroupEvents } from "./EventGroupAccess.js"
 
 class CreateOrder extends Schema.TaggedRequest<CreateOrder>()("CreateOrder", {
   payload: { orderId: Schema.String, customerId: Schema.String },
@@ -108,6 +110,12 @@ it("defineCommands.toEntityWithPersisted annotates only selected Rpc tags", () =
 it("defineEvents.toEventGroup builds a group with one entry per event and the right payload schemas", () => {
   const Events = defineEvents(OrderCreated, ItemAdded)
   const group = Events.toEventGroup((p) => p.orderId)
+  type GroupEvents = ExperimentalEventGroup.EventGroup.Events<typeof group>
+  const acceptsKnownTag = <Tag extends ExperimentalEvent.Event.Tag<GroupEvents>>(_tag: Tag) => undefined
+  acceptsKnownTag("OrderCreated")
+  acceptsKnownTag("ItemAdded")
+  // @ts-expect-error derived EventGroup should preserve the concrete event tags
+  acceptsKnownTag("UnknownEvent")
 
   const events = eventGroupEvents(group)
   expect(Object.keys(events).sort()).toEqual(["ItemAdded", "OrderCreated"])
@@ -127,12 +135,12 @@ it("defineEvents.toEventGroup wires the primaryKey function into each event", ()
   const Events = defineEvents(OrderCreated, ItemAdded)
   const group = Events.toEventGroup((p) => `pk:${p.orderId}`)
 
-  const events = eventGroupEvents(group)
-  const orderCreatedEvent = events["OrderCreated"]
+  const orderCreatedEvent = eventGroupEvent<{ readonly orderId: string; readonly customerId: string }>(
+    group,
+    "OrderCreated"
+  )
   expect(orderCreatedEvent).toBeDefined()
   // Event.make stores `primaryKey` as a direct property on the runtime event.
   // Calling it with a sample payload should reflect the user-supplied function.
-  const primaryKey = (orderCreatedEvent as unknown as { readonly primaryKey: (p: { orderId: string; customerId: string }) => string }).primaryKey
-  expect(typeof primaryKey).toBe("function")
-  expect(primaryKey({ orderId: "o-1", customerId: "c-1" })).toBe("pk:o-1")
+  expect(orderCreatedEvent?.primaryKey({ orderId: "o-1", customerId: "c-1" })).toBe("pk:o-1")
 })

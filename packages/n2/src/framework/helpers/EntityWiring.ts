@@ -3,7 +3,9 @@ import * as Schedule from "effect/Schedule"
 import * as Schema from "effect/Schema"
 import * as EventLogApi from "@effect/experimental/EventLog"
 import * as EventJournalApi from "@effect/experimental/EventJournal"
+import type { EventGroup } from "@effect/experimental"
 import type * as Context from "effect/Context"
+import { eventGroupEvent } from "./EventGroupAccess.js"
 
 /**
  * Map-based dedupe by a key function. Later entries overwrite earlier ones.
@@ -93,15 +95,6 @@ type OutboxContext<Outbox, Message> =
     ? R
     : never
 
-type RuntimeEventDefinition<Event> = {
-  readonly primaryKey: (payload: Event) => string
-  readonly payloadMsgPack: Schema.Schema.Any
-}
-
-type WriteThroughEventGroup = {
-  readonly events: Readonly<Record<string, unknown>>
-}
-
 const publishEvent = <Event extends { readonly _tag: string }>(
   publish: unknown,
   event: Event
@@ -109,11 +102,6 @@ const publishEvent = <Event extends { readonly _tag: string }>(
   // EventLog clients are tag-indexed. This boundary keeps the dynamic tag call
   // local while callers retain a typed event union.
   (publish as (tag: string, event: unknown) => Effect.Effect<unknown, unknown, unknown>)(event._tag, event)
-
-const runtimeEventDefinition = <Event>(
-  definition: unknown
-): RuntimeEventDefinition<Event> | undefined =>
-  definition as RuntimeEventDefinition<Event> | undefined
 
 const encodeRuntimeEventPayload = <Event>(
   schema: Schema.Schema.Any,
@@ -131,7 +119,7 @@ export interface WriteThroughAfterCommitPublisherConfig<
   OutboxI = never,
   Outbox extends WriteThroughOutbox<Message> = WriteThroughOutbox<Message>
 > {
-  readonly group: WriteThroughEventGroup
+  readonly group: EventGroup.EventGroup.Any
   readonly storeTag: Context.Tag<StoreI, Store>
   readonly outboxTag?: Context.Tag<OutboxI, Outbox>
   readonly makeMessage?: (event: Event) => Message
@@ -207,7 +195,7 @@ export const makeWriteThroughAfterCommitPublisher = <
         input.events,
         (event) =>
           Effect.gen(function* () {
-            const eventDefinition = runtimeEventDefinition<Event>(config.group.events[event._tag])
+            const eventDefinition = eventGroupEvent<Event>(config.group, event._tag)
             if (eventDefinition === undefined) {
               return yield* Effect.fail(new Error(`Event definition not found for "${event._tag}"`))
             }

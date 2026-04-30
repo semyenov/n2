@@ -2,6 +2,7 @@ import * as Record from "effect/Record"
 import * as Schema from "effect/Schema"
 import { ClusterSchema, Entity } from "@effect/cluster"
 import { EventGroup } from "@effect/experimental"
+import type { Event } from "@effect/experimental/Event"
 import type { RpcTupleFromCommands } from "./EntityBuilder.js"
 import { rpcListFromCommandDefinitions } from "./EntityBuilder.js"
 
@@ -57,6 +58,15 @@ type TaggedPayloadFieldsOf<Member extends TaggedSchema> =
 
 type TaggedPayloadTypeOf<Member extends TaggedSchema> =
   Schema.Simplify<Schema.Struct.Type<NoInfer<TaggedPayloadFieldsOf<Member>>>>
+
+type TaggedPayloadSchemaOf<Member extends TaggedSchema> =
+  Schema.Struct<NoInfer<TaggedPayloadFieldsOf<Member>>>
+
+type TaggedEventDefinition<Member extends TaggedSchema> =
+  Member extends TaggedSchema ? Event<Member["_tag"], TaggedPayloadSchemaOf<Member>> : never
+
+type TaggedEventGroup<Members extends [TaggedSchema, ...Array<TaggedSchema>]> =
+  EventGroup.EventGroup<TaggedEventDefinition<Members[number]>>
 
 type CommandTagOf<Command extends CommandDefinition<Tagged>> =
   CommandInfoOf<Command>["tag"]
@@ -166,8 +176,11 @@ export type {
   TaggedCollection,
   TaggedConstructor,
   TaggedConstructors,
+  TaggedEventDefinition,
+  TaggedEventGroup,
   TaggedFields,
   TaggedPayloadFieldsOf,
+  TaggedPayloadSchemaOf,
   TaggedPayloadTypeOf,
   TaggedPayloadUnion,
   TaggedSchema
@@ -214,7 +227,7 @@ export const defineEvents = <const Members extends [TaggedSchema, ...Array<Tagge
    * export const ProfileEventGroup = ProfileEvents.toEventGroup((p) => p.profileId)
    * ```
    */
-  readonly toEventGroup: (primaryKey: (payload: TaggedPayloadUnion<Members>) => string) => EventGroup.EventGroup.AnyWithProps
+  readonly toEventGroup: (primaryKey: (payload: TaggedPayloadUnion<Members>) => string) => TaggedEventGroup<Members>
 } => ({
   schema: defineSchemaUnion(...members),
   constructors: constructorsByTag(members),
@@ -228,7 +241,7 @@ export const defineEvents = <const Members extends [TaggedSchema, ...Array<Tagge
         payload
       }) as EventGroup.EventGroup.AnyWithProps
     }
-    return group
+    return group as unknown as TaggedEventGroup<Members>
   }
 })
 

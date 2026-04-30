@@ -89,12 +89,15 @@ const ItemEntityLayer = Item.toEntityLayer(ItemEntity, {
 ### 4. events.ts — EventGroup for projections
 
 ```ts
-import { EventGroup } from "@effect/experimental"
 import * as N2 from "@semyenov/n2/helpers"
 
-const ItemEventGroup = EventGroup.empty
-  .add({ tag: "ItemCreated", primaryKey: (p) => p.itemId, payload: N2.eventPayloadSchema(ItemCreated) })
+const ItemEvents = N2.defineEvents(ItemCreated)
+const ItemEventGroup = ItemEvents.toEventGroup((p) => p.itemId)
 ```
+
+Manual `EventGroup.empty.add(...)` wiring is still available for custom
+experimental EventLog use cases, but the helper keeps event tags, constructors,
+payload schemas, and primary-key payloads aligned for the usual service path.
 
 ### 5. Run tests
 

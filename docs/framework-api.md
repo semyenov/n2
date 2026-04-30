@@ -81,7 +81,13 @@ Builds a command collection from `Schema.TaggedRequest` classes. Returns `.schem
 
 ### `defineEvents(...events)`
 
-Builds an event collection. Returns `.schema`, `.constructors`.
+Builds an event collection. Returns `.schema`, `.constructors`, and
+`.toEventGroup(primaryKey)`.
+
+Use `.toEventGroup(...)` for the common N2 path. It derives an
+`@effect/experimental` EventGroup from the tagged event classes, strips `_tag`
+from each payload schema, and preserves the concrete event tags in the returned
+type.
 
 ### `eventPayloadSchema(EventClass)`
 
