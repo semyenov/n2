@@ -10,7 +10,7 @@
 ```bash
 bun install
 bunx tsc --noEmit    # type check
-bun test             # run all tests
+bun run test         # run all tests
 ```
 
 ## Your first aggregate
@@ -99,14 +99,12 @@ const ItemEventGroup = EventGroup.empty
 ### 5. Run tests
 
 ```ts
-import { test, expect } from "bun:test"
+import { it, expect } from "@effect/vitest"
 
-test("create item", async () => {
-  const { state } = await Effect.runPromise(
-    Item.handle(initialState, new CreateItem({ itemId: "i1", name: "Widget" }))
-  )
+it.effect("create item", () => Effect.gen(function* () {
+  const { state } = yield* Item.handle(initialState, new CreateItem({ itemId: "i1", name: "Widget" }))
   expect(state.status).toBe("active")
-})
+}))
 ```
 
 ## Next steps

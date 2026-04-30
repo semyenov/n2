@@ -24,13 +24,13 @@ If those files appear later, merge their guidance into this document.
 - `src/adapters/http/`: Bun / HTTP adapter code
 - `src/examples/order/`: primary reference implementation
 - `src/examples/inventory/`: secondary reference implementation
-- `src/**/*.test.ts`: colocated `bun:test` files
+- `src/**/*.test.ts`: colocated Vitest / `@effect/vitest` files
 
 ## Tooling Snapshot
 - Package manager/runtime: `bun`
 - Language: TypeScript + ESM
 - Core libraries: `effect`, `@effect/cluster`, `@effect/rpc`, `@effect/workflow`
-- Testing: `bun:test`
+- Testing: `vitest` with `@effect/vitest`
 - Benchmarks: `mitata`
 - No dedicated lint config exists today
 - No build script exists in `package.json`
@@ -39,15 +39,15 @@ If those files appear later, merge their guidance into this document.
 - `bun install` - install dependencies
 - `bun --version` - verify Bun is available
 - `bunx tsc --noEmit` - run strict type checking
-- `bun test` - run the full test suite
+- `bun run test` - run the full test suite
 
 ## Single-Test Commands
-Use Bun directly; tests are normally filtered by file path or test name.
-- `bun test src/examples/order/aggregate.test.ts` - run one test file
-- `bun test src/examples/inventory/aggregate.test.ts` - run another single file
-- `bun test src/examples/order/aggregate.test.ts -t "SubmitOrder with no items fails"` - run one named test
+Use the configured Vitest runner; tests are normally filtered by file path or test name.
+- `bun run test -- examples/order/aggregate.test.ts` - run one test file
+- `bun run test -- packages/n2/src/framework/helpers/Definition.test.ts` - run another single file
+- `bun run test -- examples/order/aggregate.test.ts -t "SubmitOrder with no items fails"` - run one named test
 
-Prefer targeted runs while iterating, then finish with `bun test`.
+Prefer targeted runs while iterating, then finish with `bun run test`.
 
 ## Other Useful Commands
 - `bun src/examples/order/index.ts` - run the main order example
@@ -58,7 +58,7 @@ Prefer targeted runs while iterating, then finish with `bun test`.
 There is no formal lint or build pipeline. For meaningful changes, agents should run:
 
 1. `bunx tsc --noEmit`
-2. `bun test`
+2. `bun run test`
 
 If a change is very local, a targeted test file is acceptable during iteration,
 but full validation is the preferred final check.
@@ -141,7 +141,7 @@ The repo contains both `function*()` and `function* ()`; follow nearby style ins
 
 ## Testing Guidelines
 - Place tests next to the code they cover using `*.test.ts`
-- Use `import { test, expect } from "bun:test"`
+- Use `import { it, expect } from "@effect/vitest"` for Effect-heavy tests
 - Keep test names behavior-first
 - Add or update tests when aggregate rules, workflows, entity wiring, or HTTP/RPC behavior changes
 - For Effect-heavy tests, use `Effect.runPromise` or scoped pipelines consistent with the current suite
@@ -156,7 +156,7 @@ Examples double as documentation and regression coverage, so keep them runnable.
 - If you change module boundaries, update `src/main.ts` and `index.ts` when needed
 
 ## Before Finishing
-For meaningful code changes, run `bunx tsc --noEmit` and `bun test`.
+For meaningful code changes, run `bunx tsc --noEmit` and `bun run test`.
 If you cannot run both, say exactly what you ran and what remains.
 
 ## Commit Message Style

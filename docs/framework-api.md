@@ -20,7 +20,7 @@ const MyAggregate = N2.define<MyEvent, MyCommand>()({
 | `handle(state, command)` | Decide + evolve for single command |
 | `run(commands[], state?)` | Sequential command batch |
 | `toEntityLayer(entity, adapter, options?)` | Cluster entity with lifecycle hooks |
-| `toStatefulRpcHandlers(group, adapter)` | Dev/test mode with `SynchronizedRef<Map>` |
+| `toStatefulRpcHandlers(group, adapter)` | Dev/test mode with per-entity state cells |
 | `toRpcHandlers(group, adapter)` | Stateless RPC (fresh state per request) |
 | `toHttpRoute(group, path, handlers)` | HTTP route wiring |
 
@@ -39,6 +39,7 @@ MyAggregate.toEntityLayer(entity, {
     save: (entityId, state, revision) => Effect<void>
     every: number                      // save every N revisions
   },
+  snapshotLoadFailure?: "fallback" | "fail",
   postHandle?: (ctx) => State,         // pure sync transform after handle
   afterCommit?: (ctx) => Effect<void>, // fire-and-forget (event publishing)
   overrides?: {                        // per-command overrides (read queries)
@@ -60,11 +61,15 @@ MyAggregate.toStatefulRpcHandlers(rpcs, {
   entityId: (command) => string,       // extract entity ID
   toResult, toError,
   snapshots?, postHandle?, afterCommit?, overrides?,
+  snapshotLoadFailure?: "fallback" | "fail",
   metrics?: { prefix: "my_aggregate" } // auto counters + timers
 })
 ```
 
 Metrics auto-instruments: `${prefix}.commands.total`, `${prefix}.commands.errors`, `${prefix}.command.duration_ms` (tagged by command type).
+Snapshot load errors log a warning and fall back to `initialState` by default.
+Set `snapshotLoadFailure: "fail"` to reject commands for that entity until the
+snapshot issue is fixed.
 
 ---
 
@@ -227,14 +232,14 @@ CLI argument parser for `--entity-id`, `--min-revision`, `--max-revision`,
 Creates test infrastructure. Returns `.makeTestLayers()` (mock snapshots + wired handlers) and `.runWith(layer, program)`.
 
 ```ts
-const { makeTestLayers, runWith } = makeTestAggregate<MyState>({
+const { makeTestLayers, runWith } = makeTestAggregate({
   eventLogSchema: MyEventLogSchema,
   noOpProjection: MyNoOpProjection,
   handlersLayer: MyHandlersRaw,
   snapshotsTag: MySnapshots
 })
 
-test("my test", async () => {
+it("my test", async () => {
   const { handlersLayer } = makeTestLayers()
   await runWith(handlersLayer, Effect.gen(function* () {
     const client = yield* RpcTest.makeClient(MyRpcs)

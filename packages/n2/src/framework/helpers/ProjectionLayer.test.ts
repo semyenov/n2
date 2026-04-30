@@ -109,3 +109,16 @@ it("makeProjectionLayer infers store methods from the store tag", () => {
   })
   expect(layer).toBeDefined()
 })
+
+it("makeProjectionLayer binds handler keys to matching event constructors", () => {
+  const layer = makeProjectionLayer({
+    group: FooEventGroup,
+    storeTag: FooStore,
+    handlers: {
+      // @ts-expect-error FooCreated handler must use the FooCreated constructor
+      FooCreated: { event: FooUpdated, storeMethod: "onFooUpdated" },
+      FooUpdated: { event: FooUpdated, storeMethod: "onFooUpdated" }
+    }
+  })
+  expect(layer).toBeDefined()
+})

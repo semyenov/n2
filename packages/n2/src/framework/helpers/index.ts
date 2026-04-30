@@ -31,6 +31,7 @@ export {
   type Definition,
   type EntityAdapterOptions,
   type RpcAdapterOptions,
+  type SnapshotLoadFailureMode,
   type StatefulRpcAdapterOptions
 } from "./Definition.js"
 
@@ -96,7 +97,11 @@ export {
   type EventMessagePayload
 } from "./EventMessage.js"
 
-export { makeEventDecoder } from "./EventDecoder.js"
+export {
+  makeEventDecoder,
+  type EventConstructors,
+  type EventDecoderOptions
+} from "./EventDecoder.js"
 
 export { wireProjectionHandler } from "./Projection.js"
 

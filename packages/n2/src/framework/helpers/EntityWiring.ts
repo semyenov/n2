@@ -102,6 +102,27 @@ type WriteThroughEventGroup = {
   readonly events: Readonly<Record<string, unknown>>
 }
 
+const publishEvent = <Event extends { readonly _tag: string }>(
+  publish: unknown,
+  event: Event
+): Effect.Effect<unknown, unknown, unknown> =>
+  // EventLog clients are tag-indexed. This boundary keeps the dynamic tag call
+  // local while callers retain a typed event union.
+  (publish as (tag: string, event: unknown) => Effect.Effect<unknown, unknown, unknown>)(event._tag, event)
+
+const runtimeEventDefinition = <Event>(
+  definition: unknown
+): RuntimeEventDefinition<Event> | undefined =>
+  definition as RuntimeEventDefinition<Event> | undefined
+
+const encodeRuntimeEventPayload = <Event>(
+  schema: Schema.Schema.Any,
+  event: Event
+) =>
+  // EventGroup payloadMsgPack is runtime metadata. The event tag lookup above
+  // proves we selected the matching schema for this encoded journal write.
+  Schema.encode(schema as unknown as Schema.Schema<Event, Uint8Array>)(event)
+
 export interface WriteThroughAfterCommitPublisherConfig<
   Event extends { readonly _tag: string },
   StoreI,
@@ -136,9 +157,7 @@ export const makeAfterCommitPublisher = <
     const publish = yield* EventLogApi.makeClient(config.schema)
     yield* Effect.forEach(
       input.events,
-      // The schema's tag union narrows event._tag at runtime; the cast lets
-      // us call `publish` with the polymorphic event type.
-      (event) => (publish as unknown as (tag: string, e: unknown) => Effect.Effect<unknown, unknown, unknown>)(event._tag, event),
+      (event) => publishEvent(publish, event),
       { discard: true }
     )
   }).pipe(
@@ -188,13 +207,11 @@ export const makeWriteThroughAfterCommitPublisher = <
         input.events,
         (event) =>
           Effect.gen(function* () {
-            const eventDefinition = config.group.events[event._tag] as RuntimeEventDefinition<Event> | undefined
+            const eventDefinition = runtimeEventDefinition<Event>(config.group.events[event._tag])
             if (eventDefinition === undefined) {
               return yield* Effect.fail(new Error(`Event definition not found for "${event._tag}"`))
             }
-            const payload = yield* Schema.encode(
-              eventDefinition.payloadMsgPack as unknown as Schema.Schema<Event, Uint8Array>
-            )(event)
+            const payload = yield* encodeRuntimeEventPayload(eventDefinition.payloadMsgPack, event)
 
             yield* journal.write({
               event: event._tag,

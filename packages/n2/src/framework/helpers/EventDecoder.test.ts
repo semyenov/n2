@@ -83,6 +83,25 @@ it.effect("makeEventDecoder decodes a valid entry to the matching constructor", 
   expect((event as OrderCreated).total).toBe(42)
 }))
 
+it("makeEventDecoder types explicit constructor maps by event tag", () => {
+  const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded })
+  expect(decode).toBeDefined()
+
+  const missing = makeEventDecoder<OrderCreated | ItemAdded>(
+    TestEventGroup,
+    // @ts-expect-error explicit event union requires every constructor
+    { OrderCreated }
+  )
+  expect(missing).toBeDefined()
+
+  const swapped = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, {
+    OrderCreated,
+    // @ts-expect-error ItemAdded tag must use the ItemAdded constructor
+    ItemAdded: OrderCreated
+  })
+  expect(swapped).toBeDefined()
+})
+
 it.effect("makeEventDecoder fails with typed Error on unknown tag", () => Effect.gen(function* () {
   const decode = makeEventDecoder<OrderCreated | ItemAdded>(TestEventGroup, { OrderCreated, ItemAdded })
   const entry = new ExpEventJournal.Entry({

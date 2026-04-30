@@ -6,7 +6,7 @@ A framework for building event-sourced microservices using **Effect-TS** and **B
 
 ```bash
 bun install
-bun test
+bun run test
 bun examples/order/server.ts                # order dev server
 bun services/profile-provider/src/server.ts # advanced production-style service
 ```

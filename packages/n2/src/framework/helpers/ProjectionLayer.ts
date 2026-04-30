@@ -38,7 +38,11 @@ type ProjectionEventUnion<Handlers> = {
 type ProjectionHandlerMapForStore<Handlers, Store> = {
   readonly [Tag in keyof Handlers]: Handlers[Tag] extends {
     readonly event: new (payload: never) => infer EventInstance extends { readonly _tag: string }
-  } ? ProjectionHandlerEntry<EventInstance, Store>
+  } ? Extract<Tag, string> extends EventInstance["_tag"]
+      ? EventInstance["_tag"] extends Extract<Tag, string>
+        ? ProjectionHandlerEntry<EventInstance, Store>
+        : never
+      : never
     : never
 }
 
@@ -105,7 +109,7 @@ type HandlerChain = {
   readonly handle: (name: string, handler: unknown) => HandlerChain
 }
 
-const toRuntimeProjectionConfig = <
+const asRuntimeProjectionConfig = <
   Events extends Event.Any,
   StoreI,
   Store,
@@ -116,12 +120,19 @@ const toRuntimeProjectionConfig = <
 >(
   config: ProjectionLayerInputConfig<Events, StoreI, Store, OutboxI, Outbox, Message, Handlers>
 ): RuntimeProjectionConfig<Message> =>
+  // EventLog.group exposes a dynamic handler builder. Keep that untyped edge
+  // here so the public handler map can remain tag- and store-method-aware.
   config as unknown as RuntimeProjectionConfig<Message>
+
+const asHandlerChain = (handlers: unknown): HandlerChain =>
+  // The experimental EventLog handler builder is structurally a chained
+  // `.handle(tag, handler)` API, but its concrete type is intentionally hidden.
+  handlers as HandlerChain
 
 const appendProjectionHandlers = <Message>(
   handlers: HandlerChain,
   config: RuntimeProjectionConfig<Message>
-): never => {
+): HandlerChain => {
   let acc = handlers
   for (const [tag, entry] of Object.entries(config.handlers)) {
     const handler = wireProjectionHandler(
@@ -133,8 +144,21 @@ const appendProjectionHandlers = <Message>(
     )
     acc = acc.handle(tag, handler)
   }
-  return acc as never
+  return acc
 }
+
+const asEventLogProjectionLayer = <
+  Events extends Event.Any,
+  Requirements
+>(layer: unknown): Layer.Layer<Event.ToService<Events>, never, Requirements> =>
+  // EventLog.group returns the right runtime layer, but the experimental API
+  // does not retain the full generic relationship after dynamic handler loops.
+  layer as Layer.Layer<Event.ToService<Events>, never, Requirements>
+
+const asEventLogHandlerResult = (handlers: HandlerChain): never =>
+  // EventLog.group expects the hidden builder return type. The handler chain is
+  // complete at runtime; only the experimental return type is unavailable here.
+  handlers as never
 
 /**
  * Build an `EventLog.group` projection Layer from a declarative event-map.
@@ -155,12 +179,12 @@ export const makeProjectionLayer = <
 >(
   config: ProjectionLayerInputConfig<Events, StoreI, Store, OutboxI, Outbox, Message, Handlers>
 ): Layer.Layer<Event.ToService<Events>, never, ProjectionLayerRequirements<Events, StoreI, OutboxI>> =>
-  EventLog.group(
+  asEventLogProjectionLayer<Events, ProjectionLayerRequirements<Events, StoreI, OutboxI>>(EventLog.group(
     config.group,
     (handlers) => {
-      return appendProjectionHandlers(
-        handlers as unknown as HandlerChain,
-        toRuntimeProjectionConfig(config)
-      )
+      return asEventLogHandlerResult(appendProjectionHandlers(
+        asHandlerChain(handlers),
+        asRuntimeProjectionConfig(config)
+      ))
     }
-  ) as Layer.Layer<Event.ToService<Events>, never, ProjectionLayerRequirements<Events, StoreI, OutboxI>>
+  ))

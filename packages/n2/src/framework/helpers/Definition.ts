@@ -148,6 +148,31 @@ const makeRoute = <Rpcs extends Rpc.Any, R>(
       Layer.provide(RpcSerialization.layerJsonRpc())
     )
 
+export type SnapshotLoadFailureMode = "fallback" | "fail"
+
+const validatePositiveIntegerOption = (name: string, value: number) => {
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer, received: ${value}`)
+  }
+}
+
+const logSnapshotLoadFailure = (
+  entityId: string,
+  mode: SnapshotLoadFailureMode,
+  error: unknown
+) =>
+  Effect.logWarning(
+    mode === "fail"
+      ? "snapshot load failed; rejecting commands"
+      : "snapshot load failed; using initial state"
+  ).pipe(
+    Effect.annotateLogs({
+      entityId,
+      snapshotLoadFailure: mode,
+      error: String(error)
+    })
+  )
+
 /** Options for mapping execution results when wiring to a cluster Entity. */
 export interface EntityAdapterOptions<State, Command extends Tagged, Event, Result, MappedErr, HooksR = unknown> {
   readonly toResult: (ctx: {
@@ -170,6 +195,8 @@ export interface EntityAdapterOptions<State, Command extends Tagged, Event, Resu
     readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, HooksR>
     readonly every: number
   }
+  /** How to handle snapshot load errors. Default: fallback to initial state. */
+  readonly snapshotLoadFailure?: SnapshotLoadFailureMode
   /** Transform state after handle() succeeds (pure, sync). Use for non-event-sourced side effects. */
   readonly postHandle?: (ctx: {
     readonly entityId: string
@@ -216,6 +243,8 @@ export interface StatefulRpcAdapterOptions<State, Command extends Tagged, Event,
     readonly save: (entityId: string, state: State, revision: number) => Effect.Effect<void, unknown, HooksR>
     readonly every: number
   }
+  /** How to handle snapshot load errors. Default: fallback to initial state. */
+  readonly snapshotLoadFailure?: SnapshotLoadFailureMode
   readonly postHandle?: (ctx: {
     readonly entityId: string
     readonly command: Command
@@ -395,21 +424,37 @@ export const define = <
       never,
       never,
       R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
-    > =>
-      entity.toLayer(
+    > => {
+      if (adapter.snapshots) {
+        validatePositiveIntegerOption("snapshots.every", adapter.snapshots.every)
+      }
+      const snapshotLoadFailure = adapter.snapshotLoadFailure ?? "fallback"
+
+      return entity.toLayer(
         Effect.gen(function* () {
           const address = yield* Entity.CurrentAddress
 
           const initial = adapter.snapshots
             ? yield* adapter.snapshots.load(address.entityId).pipe(
-                Effect.orElse(() => Effect.succeed(Option.none<{ readonly state: State; readonly revision: number }>()))
+                Effect.map((snapshot) => ({ snapshot, loadError: undefined as unknown | undefined })),
+                Effect.tapError((error) => logSnapshotLoadFailure(address.entityId, snapshotLoadFailure, error)),
+                Effect.catchAll((error) =>
+                  Effect.succeed({
+                    snapshot: Option.none<{ readonly state: State; readonly revision: number }>(),
+                    loadError: error
+                  })
+                )
               )
-            : Option.none<{ readonly state: State; readonly revision: number }>()
+            : {
+                snapshot: Option.none<{ readonly state: State; readonly revision: number }>(),
+                loadError: undefined as unknown | undefined
+              }
 
           const stateRef = yield* Ref.make(
-            Option.match(initial, { onNone: () => options.initialState, onSome: ({ state }) => state })
+            Option.match(initial.snapshot, { onNone: () => options.initialState, onSome: ({ state }) => state })
           )
-          let revision = Option.match(initial, { onNone: () => 0, onSome: ({ revision: r }) => r })
+          let revision = Option.match(initial.snapshot, { onNone: () => 0, onSome: ({ revision: r }) => r })
+          const snapshotLoadError = initial.loadError
 
           const handlers: Partial<Entity.HandlersFrom<Rpcs>> = {}
 
@@ -430,13 +475,16 @@ export const define = <
                   entityId: address.entityId,
                   getState: (_id: string) => Ref.get(stateRef)
                 })
+                const rejectSnapshotLoadFailure = snapshotLoadFailure === "fail" && snapshotLoadError !== undefined
+                  ? Effect.fail(adapter.toError(snapshotLoadError))
+                  : Effect.void
                 if (adapter.middleware) {
                   return Effect.zipRight(
                     adapter.middleware({ entityId: address.entityId, command }),
-                    run
+                    Effect.zipRight(rejectSnapshotLoadFailure, run)
                   )
                 }
-                return run
+                return Effect.zipRight(rejectSnapshotLoadFailure, run)
               }) as Entity.HandlersFrom<Rpcs>[typeof handlerTag]
               continue
             }
@@ -447,6 +495,9 @@ export const define = <
                 const command = instantiateCommand(CommandCtor, request.payload)
                 if (adapter.middleware) {
                   yield* adapter.middleware({ entityId: address.entityId, command })
+                }
+                if (snapshotLoadFailure === "fail" && snapshotLoadError !== undefined) {
+                  return yield* Effect.fail(adapter.toError(snapshotLoadError))
                 }
                 const state = yield* Ref.get(stateRef)
 
@@ -505,6 +556,7 @@ export const define = <
         never,
         R | AdapterR<Adapter> | Rpc.Context<Rpcs> | Rpc.Middleware<Rpcs> | Sharding.Sharding
       >
+    }
 
     const toRpcHandlers = <
       Rpcs extends Rpc.Any,
@@ -548,7 +600,11 @@ export const define = <
     }
 
     type StateEntry = { readonly state: State; readonly revision: number }
-    type StateCellState = { readonly entry: StateEntry; readonly initialized: boolean }
+    type StateCellState = {
+      readonly entry: StateEntry
+      readonly initialized: boolean
+      readonly loadError?: unknown
+    }
     type StateCell = {
       readonly ref: SynchronizedRef.SynchronizedRef<StateCellState>
       active: number
@@ -563,6 +619,14 @@ export const define = <
       group: RpcGroup.RpcGroup<Rpcs>,
       adapter: Adapter
     ): Layer.Layer<Rpc.ToHandler<Rpcs>, never, R | AdapterR<Adapter>> => {
+      if (adapter.snapshots) {
+        validatePositiveIntegerOption("snapshots.every", adapter.snapshots.every)
+      }
+      if (adapter.maxEntries !== undefined) {
+        validatePositiveIntegerOption("maxEntries", adapter.maxEntries)
+      }
+
+      const snapshotLoadFailure = adapter.snapshotLoadFailure ?? "fallback"
       const metrics = adapter.metrics
         ? {
             total: Metric.counter(`${adapter.metrics.prefix}.commands.total`, { incremental: true }),
@@ -580,6 +644,7 @@ export const define = <
             entry: { state: options.initialState, revision: 0 },
             initialized: false
           }
+          const initialEntry: StateEntry = { state: options.initialState, revision: 0 }
 
           const evictIfNeeded = (map: Map<string, StateCell>, protectedEntityId?: string) => {
             if (!adapter.maxEntries || map.size <= adapter.maxEntries) return map
@@ -596,13 +661,30 @@ export const define = <
             return next
           }
 
-          const loadEntry = (entityId: string): Effect.Effect<StateEntry, never, unknown> => {
-            if (!adapter.snapshots) return Effect.succeed({ state: options.initialState, revision: 0 })
+          const loadCellState = (entityId: string): Effect.Effect<StateCellState, never, unknown> => {
+            if (!adapter.snapshots) {
+              return Effect.succeed({ entry: initialEntry, initialized: true })
+            }
             return adapter.snapshots.load(entityId).pipe(
-              Effect.map(Option.getOrElse(() => ({ state: options.initialState, revision: 0 }))),
-              Effect.orElse(() => Effect.succeed({ state: options.initialState, revision: 0 }))
+              Effect.map((snapshot): StateCellState => ({
+                entry: Option.getOrElse(snapshot, () => initialEntry),
+                initialized: true
+              })),
+              Effect.tapError((error) => logSnapshotLoadFailure(entityId, snapshotLoadFailure, error)),
+              Effect.catchAll((error) =>
+                Effect.succeed({
+                  entry: initialEntry,
+                  initialized: true,
+                  loadError: error
+                })
+              )
             )
           }
+
+          const failIfSnapshotLoadFailed = (cellState: StateCellState): Effect.Effect<void, unknown> =>
+            snapshotLoadFailure === "fail" && cellState.loadError !== undefined
+              ? Effect.fail(cellState.loadError)
+              : Effect.void
 
           const ensureLoaded = (
             entityId: string,
@@ -610,9 +692,7 @@ export const define = <
           ): Effect.Effect<StateCellState, never, unknown> =>
             state.initialized
               ? Effect.succeed(state)
-              : loadEntry(entityId).pipe(
-                  Effect.map((entry): StateCellState => ({ entry, initialized: true }))
-                )
+              : loadCellState(entityId)
 
           const acquireCell = (entityId: string): Effect.Effect<StateCell, never> =>
             SynchronizedRef.modifyEffect(cells, (map) =>
@@ -658,6 +738,15 @@ export const define = <
               )
             )
 
+          const getCellState = (entityId: string): Effect.Effect<StateCellState, never, unknown> =>
+            withCell(entityId, (cell) =>
+              SynchronizedRef.modifyEffect(cell.ref, (cellState) =>
+                ensureLoaded(entityId, cellState).pipe(
+                  Effect.map((loaded) => [loaded, loaded] as const)
+                )
+              )
+            )
+
           const handlers: Partial<RpcGroup.HandlersFrom<Rpcs>> = {}
 
           for (const tag of commandTags(options.commands)) {
@@ -674,13 +763,17 @@ export const define = <
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
                 const run = runOverride(override, command, { entityId, getState })
+                const snapshotPreflight = getCellState(entityId).pipe(
+                  Effect.flatMap(failIfSnapshotLoadFailed),
+                  Effect.mapError(adapter.toError)
+                )
                 if (adapter.middleware) {
                   return Effect.zipRight(
                     adapter.middleware({ entityId, command }),
-                    run
+                    Effect.zipRight(snapshotPreflight, run)
                   )
                 }
-                return run
+                return Effect.zipRight(snapshotPreflight, run)
               }) as RpcGroup.HandlersFrom<Rpcs>[typeof handlerTag]
               continue
             }
@@ -697,8 +790,9 @@ export const define = <
                 const result = yield* withCell(entityId, (cell) =>
                   SynchronizedRef.modifyEffect(cell.ref, (cellState) =>
                     ensureLoaded(entityId, cellState).pipe(
-                      Effect.flatMap(({ entry }) =>
-                        handle(entry.state, command).pipe(
+                      Effect.flatMap((loaded) =>
+                        failIfSnapshotLoadFailed(loaded).pipe(
+                          Effect.zipRight(handle(loaded.entry.state, command)),
                           Effect.mapError((error) => adapter.toError(error)),
                           Effect.flatMap(({ events, state: next }) => {
                             let finalState = next
@@ -707,7 +801,7 @@ export const define = <
                                 entityId, command, events, state: next
                               })
                             }
-                            const nextRevision = entry.revision + events.length
+                            const nextRevision = loaded.entry.revision + events.length
                             const nextEntry = { state: finalState, revision: nextRevision }
                             const result = adapter.toResult({
                               entityId,

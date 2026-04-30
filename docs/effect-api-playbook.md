@@ -12,6 +12,30 @@ Primary sources:
 - Core `SynchronizedRef` API: <https://effect-ts.github.io/effect/effect/SynchronizedRef.ts.html>
 - Context7 library used for this repo map: `/effect-ts/effect`
 
+## Using Context7 for Effect work
+
+Use Context7 whenever an Effect API, package, or helper behavior is unfamiliar
+or plausibly version-sensitive. For this repo, the default library ID is
+`/effect-ts/effect`.
+
+If the prompt already names `/effect-ts/effect`, query it directly. Otherwise,
+resolve the library ID from `Effect` first, then query the selected official
+Effect library. Resolve again when package names, major versions, or Context7
+results look stale or too broad.
+
+Default query shape:
+
+```text
+For effect@^3.21.0 and <package>@<repo-baseline>, explain <module/API>
+for <concrete N2 task> with current TypeScript examples and pitfalls.
+```
+
+Use the generated API docs for exact signatures, overloads, and module names.
+Use Context7 examples for current usage patterns, package-family orientation,
+and quick checks before editing helpers. If a result changes a helper design or
+reveals version-sensitive behavior, record that in the PR, issue, or docs note
+near the change.
+
 Repo package baseline:
 
 | Package | Baseline |
@@ -79,6 +103,112 @@ import * as Schedule from "effect/Schedule"
 
 When adding local imports in TypeScript files, keep the repo convention of `.js`
 module specifiers.
+
+## Context7-backed orientation snippets
+
+These snippets are intentionally small. They show the shape of current Effect
+usage that Context7 surfaced for this playbook; open the generated docs before
+depending on exact overloads.
+
+Bounded collection work:
+
+```ts
+import * as Effect from "effect/Effect"
+
+const writeAll = (events: ReadonlyArray<DomainEvent>) =>
+  Effect.forEach(events, writeProjection, { concurrency: 8 })
+
+const readBoth = (entityId: string) =>
+  Effect.all({
+    state: loadState(entityId),
+    snapshot: loadSnapshot(entityId)
+  }, { concurrency: "unbounded" })
+```
+
+Retry transient infrastructure failures with a schedule, not by hand-rolled
+loops:
+
+```ts
+import * as Effect from "effect/Effect"
+import * as Schedule from "effect/Schedule"
+
+const publishWithRetry = publish(message).pipe(
+  Effect.retry(
+    Schedule.exponential("100 millis").pipe(
+      Schedule.compose(Schedule.recurs(5))
+    )
+  )
+)
+```
+
+Layer construction should make lifecycle ownership visible:
+
+```ts
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+
+const StoreConfigLive = Layer.succeed(StoreConfig, { table: "profiles" })
+
+const StoreLive = Layer.effect(
+  Store,
+  Effect.gen(function* () {
+    const config = yield* StoreConfig
+    return makeStore(config)
+  })
+).pipe(
+  Layer.provide(StoreConfigLive)
+)
+
+const WorkerLive = Layer.scoped(Worker, acquireWorker)
+const AppLive = WorkerLive.pipe(Layer.provideMerge(StoreLive))
+```
+
+RPC clients and handlers should keep protocol and serialization in layers:
+
+```ts
+import * as Effect from "effect/Effect"
+import * as Layer from "effect/Layer"
+import { FetchHttpClient } from "@effect/platform"
+import { RpcClient, RpcSerialization } from "@effect/rpc"
+import { MyRpcs } from "./contracts.js"
+
+const HandlersLive = MyRpcs.toLayer(
+  Effect.gen(function* () {
+    const store = yield* Store
+    return {
+      GetSomething: ({ id }) => store.get(id)
+    }
+  })
+).pipe(
+  Layer.provide(StoreLive)
+)
+
+const ProtocolLive = RpcClient.layerProtocolHttp({ url: "/rpc/my-service" }).pipe(
+  Layer.provide([FetchHttpClient.layer, RpcSerialization.layerJson])
+)
+
+const clientProgram = Effect.gen(function* () {
+  const client = yield* RpcClient.make(MyRpcs)
+  return yield* client.GetSomething({ id: "example" })
+}).pipe(
+  Effect.provide(ProtocolLive)
+)
+```
+
+Use scoped tests for scoped resources instead of smuggling a `Scope` through a
+plain test:
+
+```ts
+import { it } from "@effect/vitest"
+import * as Effect from "effect/Effect"
+
+it.scoped("releases scoped resources", () =>
+  Effect.gen(function* () {
+    const resource = yield* acquireResource
+    yield* useResource(resource)
+  })
+)
+```
 
 ## Concurrency and state
 
@@ -286,3 +416,6 @@ projection stores, outbox workers, replay tools, and workflow wiring.
 - Are timing-sensitive tests using `Schedule`, `Deferred`, or `TestClock`
   instead of wall-clock sleeps?
 - Do observability changes preserve metric names used by dashboards and docs?
+- Before changing helpers against an unfamiliar Effect API, was Context7
+  refreshed through `/effect-ts/effect` and any version-sensitive behavior
+  recorded near the change?

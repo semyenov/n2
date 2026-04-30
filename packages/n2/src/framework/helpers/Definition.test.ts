@@ -7,6 +7,7 @@ import { it, expect } from "@effect/vitest"
 import * as Deferred from "effect/Deferred"
 import * as Effect from "effect/Effect"
 import * as Fiber from "effect/Fiber"
+import * as Option from "effect/Option"
 import * as Ref from "effect/Ref"
 import * as Schema from "effect/Schema"
 import * as TestClock from "effect/TestClock"
@@ -285,14 +286,170 @@ it.effect("stateful RPC handlers serialize the same entity without serializing e
         sameEntity.first,
         "same entity command did not enter the first decision"
       )
+      const readWhileWriting = yield* client.GetDelayedCount({ counterId: "counter-c" }).pipe(Effect.fork)
       yield* Effect.yieldNow()
       yield* Effect.yieldNow()
       expect(yield* Deferred.isDone(sameEntity.second)).toBe(false)
+      expect(Option.isNone(yield* Fiber.poll(readWhileWriting))).toBe(true)
       yield* Deferred.succeed(sameEntity.release, undefined)
       yield* Fiber.join(sameFiber)
+      yield* Fiber.join(readWhileWriting)
       expect(yield* Ref.get(maxActiveDecisions)).toBe(1)
 
       const count = yield* client.GetDelayedCount({ counterId: "counter-c" })
       expect(count).toBe(2)
     }).pipe(Effect.provide(handlers))
   })))
+
+it.effect("stateful RPC handlers evict least-recently-used inactive entries", () =>
+  Effect.scoped(Effect.gen(function* () {
+    const CacheCounter = define<DelayedEvent, DelayedCommand>()({
+      initialState: { count: 0 } as CounterState,
+      commands: DelayedCommands.constructors,
+      evolve: {
+        DelayedIncremented: (state, event) => ({ count: state.count + event.amount })
+      },
+      decide: {
+        DelayedIncrement: (_state, command) =>
+          Effect.succeed([new DelayedIncremented({ amount: command.amount })]),
+        GetDelayedCount: () => Effect.succeed([])
+      }
+    })
+
+    const handlers = CacheCounter.toStatefulRpcHandlers(
+      DelayedEntity.protocol,
+      {
+        entityId: (command) => command.counterId,
+        toResult: ({ state }) => state.count,
+        toError: (error) =>
+          error instanceof CounterError
+            ? error
+            : new CounterError({ message: String(error) }),
+        maxEntries: 1,
+        overrides: {
+          GetDelayedCount: (command, ctx) =>
+            ctx.getState(command.counterId).pipe(
+              Effect.map((state) => state.count)
+            )
+        }
+      }
+    )
+
+    yield* Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(DelayedEntity.protocol)
+
+      expect(yield* client.DelayedIncrement({ counterId: "counter-a", amount: 1 })).toBe(1)
+      expect(yield* client.DelayedIncrement({ counterId: "counter-b", amount: 10 })).toBe(10)
+      expect(yield* client.GetDelayedCount({ counterId: "counter-b" })).toBe(10)
+      expect(yield* client.GetDelayedCount({ counterId: "counter-a" })).toBe(0)
+    }).pipe(Effect.provide(handlers))
+  })))
+
+it.effect("stateful RPC handlers fall back to initial state on snapshot load failure by default", () =>
+  Effect.scoped(Effect.gen(function* () {
+    const SnapshotCounter = define<DelayedEvent, DelayedCommand>()({
+      initialState: { count: 0 } as CounterState,
+      commands: DelayedCommands.constructors,
+      evolve: {
+        DelayedIncremented: (state, event) => ({ count: state.count + event.amount })
+      },
+      decide: {
+        DelayedIncrement: (_state, command) =>
+          Effect.succeed([new DelayedIncremented({ amount: command.amount })]),
+        GetDelayedCount: () => Effect.succeed([])
+      }
+    })
+
+    const handlers = SnapshotCounter.toStatefulRpcHandlers(
+      DelayedEntity.protocol,
+      {
+        entityId: (command) => command.counterId,
+        toResult: ({ state }) => state.count,
+        toError: (error) =>
+          error instanceof CounterError
+            ? error
+            : new CounterError({ message: String(error) }),
+        snapshots: {
+          load: () => Effect.fail("snapshot unavailable"),
+          save: () => Effect.void,
+          every: 10
+        }
+      }
+    )
+
+    yield* Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(DelayedEntity.protocol)
+      expect(yield* client.DelayedIncrement({ counterId: "counter-a", amount: 2 })).toBe(2)
+    }).pipe(Effect.provide(handlers))
+  })))
+
+it.effect("stateful RPC handlers can fail commands on snapshot load failure", () =>
+  Effect.scoped(Effect.gen(function* () {
+    const SnapshotCounter = define<DelayedEvent, DelayedCommand>()({
+      initialState: { count: 0 } as CounterState,
+      commands: DelayedCommands.constructors,
+      evolve: {
+        DelayedIncremented: (state, event) => ({ count: state.count + event.amount })
+      },
+      decide: {
+        DelayedIncrement: (_state, command) =>
+          Effect.succeed([new DelayedIncremented({ amount: command.amount })]),
+        GetDelayedCount: () => Effect.succeed([])
+      }
+    })
+
+    const handlers = SnapshotCounter.toStatefulRpcHandlers(
+      DelayedEntity.protocol,
+      {
+        entityId: (command) => command.counterId,
+        toResult: ({ state }) => state.count,
+        toError: (error) =>
+          error instanceof CounterError
+            ? error
+            : new CounterError({ message: String(error) }),
+        snapshotLoadFailure: "fail",
+        snapshots: {
+          load: () => Effect.fail("snapshot unavailable"),
+          save: () => Effect.void,
+          every: 10
+        }
+      }
+    )
+
+    yield* Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(DelayedEntity.protocol)
+      const error = yield* client.DelayedIncrement({ counterId: "counter-a", amount: 2 }).pipe(Effect.flip)
+      expect(error._tag).toBe("CounterError")
+      expect(error.message).toContain("snapshot unavailable")
+    }).pipe(Effect.provide(handlers))
+  })))
+
+it("stateful RPC handlers validate cache and snapshot options", () => {
+  expect(() =>
+    Counter.toStatefulRpcHandlers(TestCommands.toEntity("InvalidMaxEntries", () => "counter").protocol, {
+      entityId: () => "counter",
+      toResult: ({ state }) => state.count,
+      toError: (error) =>
+        error instanceof CounterError
+          ? error
+          : new CounterError({ message: String(error) }),
+      maxEntries: 0
+    })
+  ).toThrow("maxEntries must be a positive integer")
+
+  expect(() =>
+    Counter.toStatefulRpcHandlers(TestCommands.toEntity("InvalidSnapshotCadence", () => "counter").protocol, {
+      entityId: () => "counter",
+      toResult: ({ state }) => state.count,
+      toError: (error) =>
+        error instanceof CounterError
+          ? error
+          : new CounterError({ message: String(error) }),
+      snapshots: {
+        load: () => Effect.succeed(Option.none()),
+        save: () => Effect.void,
+        every: 0
+      }
+    })
+  ).toThrow("snapshots.every must be a positive integer")
+})
