@@ -8,7 +8,6 @@ import type {
   AuditSummary,
   ConsentState,
   DataSubjectRequest,
-  EncryptedPayload,
   EntityReference,
   ExtractionInfo,
   Jurisdiction,
@@ -40,9 +39,6 @@ type RecordCurrentRow = {
   readonly entity_type: string
   readonly entity_version: number
   readonly jurisdiction_json: string
-  readonly encrypted_data: string
-  readonly encrypted_dek: string
-  readonly encryption_json: string
   readonly consent_json: string
   readonly subject_requests_json: string
   readonly retention_json: string
@@ -74,7 +70,6 @@ const recordRow = (input: {
   readonly schemaVersion: string
   readonly entityReference: EntityReference
   readonly jurisdiction: Jurisdiction
-  readonly encryptedPayload: EncryptedPayload
   readonly consent: ConsentState
   readonly subjectRequests: ReadonlyArray<DataSubjectRequest>
   readonly retention: RetentionInfo | null
@@ -92,9 +87,6 @@ const recordRow = (input: {
   entity_type: input.entityReference.entityType,
   entity_version: input.entityReference.entityVersion,
   jurisdiction_json: asJson(input.jurisdiction),
-  encrypted_data: input.encryptedPayload.encryptedData,
-  encrypted_dek: input.encryptedPayload.encryptedDek,
-  encryption_json: asJson(input.encryptedPayload.encryption),
   consent_json: asJson(input.consent),
   subject_requests_json: asJson(input.subjectRequests),
   retention_json: asJson(input.retention),
@@ -136,14 +128,39 @@ const loadLatestRecord = (client: Clickhouse.ClickHouseClient, storageKey: strin
     client,
     `SELECT storage_key, record_id, revision, status, schema_version,
             entity_id, entity_type, entity_version, jurisdiction_json,
-            encrypted_data, encrypted_dek, encryption_json, consent_json,
-            subject_requests_json, retention_json, audit_json, extraction_info_json,
+            consent_json, subject_requests_json, retention_json, audit_json, extraction_info_json,
             created_at, updated_at
      FROM pii_provider_records_current
      WHERE storage_key = {storageKey:String}
      ORDER BY revision DESC LIMIT 1`,
     { storageKey }
   ).pipe(Effect.map((rows) => rows[0]))
+
+const eventStatus = (event: PIIProviderEvent) =>
+  "status" in event ? event.status : ""
+
+const eventSummary = (event: PIIProviderEvent) => {
+  if ("summary" in event) return event.summary
+  if ("reason" in event) return event.reason
+  if ("subjectRequest" in event) return event.subjectRequest.requestType
+  return event._tag
+}
+
+const projectionMetadata = (event: PIIProviderEvent) =>
+  asJson({
+    schemaVersion: "schemaVersion" in event ? event.schemaVersion : undefined,
+    entityReference: "entityReference" in event ? event.entityReference : undefined,
+    jurisdiction: "jurisdiction" in event ? event.jurisdiction : undefined,
+    consentGiven: "consent" in event ? event.consent.given : undefined,
+    consentPurposes: "consent" in event ? event.consent.purposes : undefined,
+    subjectRequestType: "subjectRequest" in event ? event.subjectRequest.requestType : undefined,
+    subjectRequestStatus: "subjectRequest" in event ? event.subjectRequest.status : undefined,
+    reason: "reason" in event ? event.reason : undefined,
+    immediate: "immediate" in event ? event.immediate : undefined,
+    retainForLegal: "retainForLegal" in event ? event.retainForLegal : undefined,
+    auditAction: event.auditEntry.action,
+    auditSuccess: event.auditEntry.success
+  })
 
 const insertProjectionEvent = (
   ch: ClickhouseClient.ClickhouseClient,
@@ -157,7 +174,10 @@ const insertProjectionEvent = (
       revision: event.revision,
       event_type: event._tag,
       occurred_at: String(event.occurredAt.toJSON()),
-      payload_json: JSON.stringify(event)
+      actor_id: event.actorId,
+      status: eventStatus(event),
+      summary: eventSummary(event),
+      metadata_json: projectionMetadata(event)
     }]
   }).pipe(Effect.asVoid, (effect) => withProjectionInsertSettings(ch, effect))
 
@@ -202,7 +222,6 @@ const createdRecordRow = (event: PIIRecordCreated | PIIRecordStoredFromProfile) 
     schemaVersion: event.schemaVersion,
     entityReference: event.entityReference,
     jurisdiction: event.jurisdiction,
-    encryptedPayload: event.encryptedPayload,
     consent: event.consent,
     subjectRequests: event.dataSubjectRequests,
     retention: event.retention,
@@ -213,9 +232,7 @@ const createdRecordRow = (event: PIIRecordCreated | PIIRecordStoredFromProfile) 
   })
 }
 
-export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
-  PIIProviderProjectionStore,
-  Effect.gen(function* () {
+export const makePIIProviderProjectionStoreClickhouse = Effect.gen(function* () {
     const ch = yield* ClickhouseClient.ClickhouseClient
     const direct = yield* Effect.acquireRelease(
       Effect.sync(() => Clickhouse.createClient(ch.config)),
@@ -277,9 +294,6 @@ export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
         updateRecord(event, (current) => ({
           ...current,
           revision: event.revision,
-          encrypted_data: event.encryptedPayload.encryptedData,
-          encrypted_dek: event.encryptedPayload.encryptedDek,
-          encryption_json: asJson(event.encryptedPayload.encryption),
           audit_json: asJson(event.audit),
           updated_at: String(event.occurredAt.toJSON())
         }), event.auditEntry),
@@ -337,9 +351,6 @@ export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
           ...current,
           revision: event.revision,
           status: event.status,
-          encrypted_data: event.encryptedPayload.encryptedData,
-          encrypted_dek: event.encryptedPayload.encryptedDek,
-          encryption_json: asJson(event.encryptedPayload.encryption),
           subject_requests_json: asJson(applySubjectRequest(current.subject_requests_json, event.subjectRequest)),
           audit_json: asJson(event.audit),
           updated_at: String(event.occurredAt.toJSON())
@@ -349,9 +360,6 @@ export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
         updateRecord(event, (current) => ({
           ...current,
           revision: event.revision,
-          encrypted_data: event.encryptedPayload.encryptedData,
-          encrypted_dek: event.encryptedPayload.encryptedDek,
-          encryption_json: asJson(event.encryptedPayload.encryption),
           audit_json: asJson(event.audit),
           updated_at: String(event.occurredAt.toJSON())
         }), event.auditEntry),
@@ -365,6 +373,10 @@ export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
         }), event.auditEntry)
     }
 
-    return { ...handlers, dispatch: makeDispatch(handlers) }
-  })
+  return { ...handlers, dispatch: makeDispatch(handlers) }
+})
+
+export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
+  PIIProviderProjectionStore,
+  makePIIProviderProjectionStoreClickhouse
 )

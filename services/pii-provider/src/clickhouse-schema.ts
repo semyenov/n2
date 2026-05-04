@@ -11,7 +11,10 @@ const createProjectionEventsTable = Effect.gen(function* () {
       revision UInt64,
       event_type String,
       occurred_at String,
-      payload_json String
+      actor_id String,
+      status String,
+      summary String,
+      metadata_json String
     )
     ENGINE = ReplacingMergeTree(revision)
     ORDER BY (storage_key, revision, event_type)
@@ -31,9 +34,6 @@ const createRecordsCurrentTable = Effect.gen(function* () {
       entity_type String,
       entity_version UInt64,
       jurisdiction_json String,
-      encrypted_data String,
-      encrypted_dek String,
-      encryption_json String,
       consent_json String,
       subject_requests_json String,
       retention_json String,
@@ -78,7 +78,10 @@ export const PIIProviderClickhouseBootstrapLayer = Layer.effectDiscard(
 
 export const resetPIIProviderClickhouseTables = Effect.gen(function* () {
   const clickhouse = yield* ClickhouseClient.ClickhouseClient
-  yield* clickhouse.asCommand(clickhouse`TRUNCATE TABLE IF EXISTS pii_provider_projection_events`)
-  yield* clickhouse.asCommand(clickhouse`TRUNCATE TABLE IF EXISTS pii_provider_records_current`)
-  yield* clickhouse.asCommand(clickhouse`TRUNCATE TABLE IF EXISTS pii_provider_audit_events`)
+  yield* clickhouse.asCommand(clickhouse`DROP TABLE IF EXISTS pii_provider_projection_events`)
+  yield* clickhouse.asCommand(clickhouse`DROP TABLE IF EXISTS pii_provider_records_current`)
+  yield* clickhouse.asCommand(clickhouse`DROP TABLE IF EXISTS pii_provider_audit_events`)
+  yield* createProjectionEventsTable
+  yield* createRecordsCurrentTable
+  yield* createAuditEventsTable
 })

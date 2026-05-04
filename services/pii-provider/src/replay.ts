@@ -10,8 +10,6 @@ import {
   type ReplayOptions
 } from "@semyenov/n2/helpers"
 import { makeReplayInfrastructureLayer } from "@semyenov/n2/runtime"
-import { PIIProviderClickhouseBootstrapLayer, resetPIIProviderClickhouseTables } from "./clickhouse-schema.js"
-import { PIIProviderClickhouseLayer } from "./clickhouse.js"
 import {
   PIIConsentUpdated,
   PIIConsentWithdrawn,
@@ -29,7 +27,10 @@ import {
 import { PIIProviderEventJournalTables } from "./event-journal.js"
 import { PIIProviderEventGroup } from "./events.js"
 import { PIIProviderProjectionStore } from "./projection-store.js"
-import { PIIProviderProjectionStoreClickhouseLive } from "./projection-store-clickhouse.js"
+import {
+  PIIProviderProjectionStorePgLive,
+  resetPIIProviderPgProjection
+} from "./projection-store-pg.js"
 
 const decodeEvent = makeEventDecoder<PIIProviderEvent>(PIIProviderEventGroup, {
   PIIRecordCreated,
@@ -62,13 +63,11 @@ export const collectReplayEvents = replay.collectEvents
 
 const ReplayLayer = makeReplayInfrastructureLayer({
   eventJournal: PIIProviderEventJournalTables,
-  clickhouseLayer: PIIProviderClickhouseLayer,
-  clickhouseBootstrapLayer: PIIProviderClickhouseBootstrapLayer,
-  projectionStoreLayer: PIIProviderProjectionStoreClickhouseLive
+  projectionStoreLayer: PIIProviderProjectionStorePgLive
 })
 
 const program = Effect.gen(function* () {
-  const resetFromEnv = yield* Config.boolean("RESET_CLICKHOUSE").pipe(Config.withDefault(true))
+  const resetFromEnv = yield* Config.boolean("RESET_PROJECTIONS").pipe(Config.withDefault(true))
   yield* makeReplayProgram({
     argv: Bun.argv.slice(2),
     resetDefault: resetFromEnv,
@@ -78,7 +77,7 @@ const program = Effect.gen(function* () {
     entityIdOf: (event) => event.storageKey,
     dispatch: dispatchToStore,
     eventGroup: PIIProviderEventGroup,
-    reset: resetPIIProviderClickhouseTables
+    reset: resetPIIProviderPgProjection
   })
 })
 

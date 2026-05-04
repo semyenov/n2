@@ -276,8 +276,8 @@ In N2, domain and aggregate code should describe requirements. Runtime modules
 assemble concrete layers. Keep lifecycle ownership at clear boundaries:
 
 - framework helpers define reusable wiring;
-- service `layers.ts` files choose concrete PostgreSQL, ClickHouse, outbox,
-  workflow, and telemetry implementations;
+- service `layers.ts` files choose concrete PostgreSQL, optional ClickHouse,
+  outbox, workflow, and telemetry implementations;
 - `server.ts`, `cluster.ts`, and replay tools provide final runtimes.
 
 When a helper accepts a user effect, preserve its requirements in the helper's
@@ -374,8 +374,9 @@ before writing, decode after reading, and keep migration-before-decode behavior
 explicit in replay paths.
 
 Projections are adapter code. They consume already-decoded events and maintain
-read models in PostgreSQL or ClickHouse. Cache only what the process can prove
-it owns, and keep a durable lookup path for restart, replay, and repair.
+read models in PostgreSQL by default, with ClickHouse reserved for explicit
+analytics projections. Cache only what the process can prove it owns, and keep a
+durable lookup path for restart, replay, and repair.
 
 Outbox workers publish durable messages asynchronously. The command path may
 wait for durable enqueue/publish when the service requires write-through safety,
@@ -413,8 +414,8 @@ projection stores, outbox workers, replay tools, and workflow wiring.
 - Are `SynchronizedRef`, semaphores, and queues keyed or scoped narrowly enough
   for the service's concurrency model?
 - Are long-running fibers tied to `Layer` or scoped lifecycles?
-- Are SQL, ClickHouse, event journal, and outbox payloads decoded at ingress and
-  encoded at egress?
+- Are SQL, optional ClickHouse, event journal, and outbox payloads decoded at
+  ingress and encoded at egress?
 - Does replay migrate or normalize historical data before current-schema decode?
 - Are aggregate decisions free of infrastructure concerns?
 - Do read overrides avoid mutating command state?

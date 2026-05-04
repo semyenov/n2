@@ -3,6 +3,7 @@ import * as Context from "effect/Context"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as DateTime from "effect/DateTime"
+import * as Redacted from "effect/Redacted"
 import {
   EncryptedPayload,
   EncryptionInfo,
@@ -25,7 +26,9 @@ type EncryptInput = {
 }
 
 const LOCAL_KEY_ID = "local-pii-master-key"
-const LOCAL_MASTER_SECRET = "n2-local-pii-master-key"
+const LOCAL_MASTER_SECRET = Redacted.make("n2-local-pii-master-key")
+
+type MasterSecret = Redacted.Redacted<string>
 
 const isLocalEnvironment = () => {
   const deployment = process.env.DEPLOYMENT_ENVIRONMENT?.trim().toLowerCase()
@@ -38,12 +41,12 @@ const isLocalEnvironment = () => {
 
 const masterSecret = () => {
   const configured = process.env.PII_MASTER_KEY?.trim()
-  if (configured !== undefined && configured.length > 0) return configured
+  if (configured !== undefined && configured.length > 0) return Redacted.make(configured)
   if (isLocalEnvironment()) return LOCAL_MASTER_SECRET
   throw new Error("PII_MASTER_KEY is required outside local/test environments")
 }
 
-const masterKey = (secret: string) => createHash("sha256").update(secret).digest()
+const masterKey = (secret: MasterSecret) => createHash("sha256").update(Redacted.value(secret)).digest()
 
 const encodeSealed = (iv: Buffer, tag: Buffer, ciphertext: Buffer) =>
   `${iv.toString("base64")}.${tag.toString("base64")}.${ciphertext.toString("base64")}`
@@ -76,7 +79,7 @@ const open = (key: Buffer, sealed: string, aad: string) => {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()])
 }
 
-const encryptLocal = (secret: string, input: EncryptInput) => {
+const encryptLocal = (secret: MasterSecret, input: EncryptInput) => {
   if ((input.algorithm ?? "AES-256-GCM") !== "AES-256-GCM") {
     throw new Error("Local PII crypto supports AES-256-GCM only")
   }
@@ -99,7 +102,7 @@ const encryptLocal = (secret: string, input: EncryptInput) => {
   })
 }
 
-const decryptLocal = (secret: string, input: EncryptedInput) => {
+const decryptLocal = (secret: MasterSecret, input: EncryptedInput) => {
   if (input.encryption.algorithm !== "AES-256-GCM") {
     throw new Error("Local PII crypto supports AES-256-GCM only")
   }

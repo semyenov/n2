@@ -1,14 +1,12 @@
 /**
- * Dev server — in-memory state, PostgreSQL infrastructure, and ClickHouse read projections.
+ * Dev server — in-memory state and PostgreSQL-backed operational storage.
  *
  * Required:
  *   DATABASE_URL    PostgreSQL connection string
- *   CLICKHOUSE_URL  ClickHouse HTTP URL, e.g. http://localhost:8123
  *   PII_MASTER_KEY  Master key for local envelope encryption outside local/test
  *
  * Optional:
- *   CLICKHOUSE_DATABASE  ClickHouse database (default: default)
- *   PORT                 Public JSON-RPC / health port (default: 4120)
+ *   PORT  Public JSON-RPC / health port (default: 4120)
  */
 import { BunRuntime } from "@effect/platform-bun"
 import { makeServerEntrypoint } from "@semyenov/n2/runtime"

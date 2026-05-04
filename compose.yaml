@@ -89,7 +89,18 @@ services:
       timeout: 5s
       retries: 20
 
+  postgres-ui:
+    image: adminer:latest
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    ports:
+      - "${POSTGRES_UI_PORT:-8081}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   clickhouse:
+    profiles: ["analytics"]
     image: clickhouse/clickhouse-server:latest-alpine
     environment:
       CLICKHOUSE_DB: n2
@@ -109,6 +120,7 @@ services:
       retries: 20
 
   clickhouse-ui:
+    profiles: ["analytics"]
     image: ghcr.io/caioricciuti/ch-ui:latest
     environment:
       CLICKHOUSE_URL: http://clickhouse:8123
@@ -128,8 +140,6 @@ services:
       dockerfile: Dockerfile.services
     environment:
       DATABASE_URL: postgres://n2:n2@postgres:5432/n2
-      CLICKHOUSE_URL: http://n2:n2@clickhouse:8123
-      CLICKHOUSE_DATABASE: n2
       DEPLOYMENT_ENVIRONMENT: local
       OBSERVABILITY_ENABLED: true
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -139,8 +149,6 @@ services:
     command: ["bun", "services/profile-provider/src/server.ts"]
     depends_on:
       postgres:
-        condition: service_healthy
-      clickhouse:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -163,8 +171,6 @@ services:
       dockerfile: Dockerfile.services
     environment:
       DATABASE_URL: postgres://n2:n2@postgres:5432/n2
-      CLICKHOUSE_URL: http://n2:n2@clickhouse:8123
-      CLICKHOUSE_DATABASE: n2
       DEPLOYMENT_ENVIRONMENT: local
       OBSERVABILITY_ENABLED: true
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -174,8 +180,6 @@ services:
     command: ["bun", "services/request-provider/src/server.ts"]
     depends_on:
       postgres:
-        condition: service_healthy
-      clickhouse:
         condition: service_healthy
       otel-collector:
         condition: service_started
@@ -198,8 +202,6 @@ services:
       dockerfile: Dockerfile.services
     environment:
       DATABASE_URL: postgres://n2:n2@postgres:5432/n2
-      CLICKHOUSE_URL: http://n2:n2@clickhouse:8123
-      CLICKHOUSE_DATABASE: n2
       DEPLOYMENT_ENVIRONMENT: local
       OBSERVABILITY_ENABLED: true
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
@@ -210,8 +212,6 @@ services:
     command: ["bun", "services/pii-provider/src/server.ts"]
     depends_on:
       postgres:
-        condition: service_healthy
-      clickhouse:
         condition: service_healthy
       otel-collector:
         condition: service_started

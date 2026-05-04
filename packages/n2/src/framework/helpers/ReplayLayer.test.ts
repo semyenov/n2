@@ -4,8 +4,6 @@ import { makeReplayInfrastructureLayer } from "./ReplayLayer.js"
 
 it("makeReplayInfrastructureLayer composes empty inputs into a Layer", () => {
   const layer = makeReplayInfrastructureLayer({
-    clickhouseLayer: Layer.empty,
-    clickhouseBootstrapLayer: Layer.empty,
     projectionStoreLayer: Layer.empty,
     sqlLayer: Layer.empty as never
   })
@@ -25,6 +23,15 @@ it("makeReplayInfrastructureLayer accepts service-specific event journal tables"
       entryTable: "service_event_journal",
       remotesTable: "service_event_remotes"
     },
+    projectionStoreLayer: Layer.empty,
+    sqlLayer: Layer.empty as never
+  })
+
+  expect(layer).toBeDefined()
+})
+
+it("makeReplayInfrastructureLayer still accepts explicit ClickHouse layers", () => {
+  const layer = makeReplayInfrastructureLayer({
     clickhouseLayer: Layer.empty,
     clickhouseBootstrapLayer: Layer.empty,
     projectionStoreLayer: Layer.empty,

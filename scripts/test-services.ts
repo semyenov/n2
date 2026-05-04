@@ -111,6 +111,56 @@ const makeExtraSource = (kind: "profile" | "request") => ({
 })
 
 const json = (value: unknown) => JSON.stringify(value)
+const sqlString = (value: string) => `'${value.replaceAll("'", "''")}'`
+
+const queryPostgresScalar = async (query: string) => {
+  const process = Bun.spawn([
+    "docker",
+    "compose",
+    "exec",
+    "-T",
+    "postgres",
+    "psql",
+    "-U",
+    "n2",
+    "-d",
+    "n2",
+    "-t",
+    "-A",
+    "-c",
+    query
+  ], {
+    stdout: "pipe",
+    stderr: "pipe"
+  })
+  const [stdout, stderr, code] = await Promise.all([
+    new Response(process.stdout).text(),
+    new Response(process.stderr).text(),
+    process.exited
+  ])
+
+  if (code !== 0) {
+    throw new Error(`Postgres query failed (${code}): ${stderr.trim()}`)
+  }
+
+  return stdout.trim()
+}
+
+const verifyEventJournalCount = async (
+  name: string,
+  table: string,
+  primaryKey: string,
+  expectedCount: number
+) => {
+  const count = Number(await runStep(`${name}: verify event journal entries`, () =>
+    queryPostgresScalar(`
+      SELECT count(*)
+      FROM ${table}
+      WHERE primary_key = ${sqlString(primaryKey)}
+    `)
+  ))
+  assertEqual(count, expectedCount, `${name}: event journal entry count mismatch`)
+}
 
 const makeProfileDocument = (profileId: string, position = "Senior TypeScript Engineer") => ({
   uuid: profileId,
@@ -304,6 +354,176 @@ const makePIIRecord = (recordId: string, profileId: string, actorId: string) => 
   status: "ACTIVE" as const
 })
 
+const verifyProfilePostgresProjection = async (
+  profileId: string,
+  snapshotId: string,
+  latestPiiStorageKey: string
+) => {
+  const escapedProfileId = sqlString(profileId)
+  const escapedSnapshotId = sqlString(snapshotId)
+
+  const profileState = await runStep("profile-provider: verify Postgres profile projection", () =>
+    queryPostgresScalar(`
+      SELECT concat_ws(
+        '|',
+        status,
+        current_revision::text,
+        active_branch_id,
+        current_schema_version,
+        latest_pii_storage_key,
+        pii_jurisdiction,
+        published_snapshot_id
+      )
+      FROM profile_provider_profiles_read
+      WHERE profile_id = ${escapedProfileId}
+    `)
+  )
+  assertEqual(
+    profileState,
+    ["published", "12", "review", "1.2.0", latestPiiStorageKey, "DE", snapshotId].join("|"),
+    "profile-provider: Postgres profile projection mismatch"
+  )
+
+  const snapshotState = await runStep("profile-provider: verify Postgres snapshot projection", () =>
+    queryPostgresScalar(`
+      SELECT concat_ws(
+        '|',
+        published::text,
+        revision::text,
+        snapshot_type,
+        schema_version,
+        profile_json::jsonb #>> '{userData,personalInfo,relevantPosition}',
+        strategy_json::jsonb ->> 'priority'
+      )
+      FROM profile_provider_snapshots_read
+      WHERE snapshot_id = ${escapedSnapshotId}
+    `)
+  )
+  assertEqual(
+    snapshotState,
+    "true|8|MANUAL|1.2.0|Principal Platform Engineer|high",
+    "profile-provider: Postgres snapshot projection mismatch"
+  )
+
+  await verifyEventJournalCount("profile-provider", "profile_provider_event_journal", profileId, 12)
+}
+
+const verifyRequestPostgresProjection = async (
+  requestId: string,
+  firstSnapshotId: string,
+  secondSnapshotId: string
+) => {
+  const escapedRequestId = sqlString(requestId)
+
+  const requestState = await runStep("request-provider: verify Postgres request projection", () =>
+    queryPostgresScalar(`
+      SELECT concat_ws(
+        '|',
+        status,
+        current_revision::text,
+        current_schema_version,
+        latest_snapshot_id,
+        request_json::jsonb #>> '{vacancyData,relevantPosition}'
+      )
+      FROM request_provider_requests_read
+      WHERE request_id = ${escapedRequestId}
+    `)
+  )
+  assertEqual(
+    requestState,
+    ["snapshotted", "9", "1.4.0", secondSnapshotId, "Staff Distributed Systems Engineer"].join("|"),
+    "request-provider: Postgres request projection mismatch"
+  )
+
+  const snapshotState = await runStep("request-provider: verify Postgres snapshot projections", () =>
+    queryPostgresScalar(`
+      SELECT string_agg(
+        snapshot_id || ':' ||
+        snapshot_type || ':' ||
+        revision::text || ':' ||
+        (request_json::jsonb #>> '{vacancyData,relevantPosition}'),
+        ','
+        ORDER BY revision
+      )
+      FROM request_provider_snapshots_read
+      WHERE request_id = ${escapedRequestId}
+    `)
+  )
+  assertEqual(
+    snapshotState,
+    [
+      `${firstSnapshotId}:MANUAL:5:Staff Platform Engineer`,
+      `${secondSnapshotId}:LLM:9:Staff Distributed Systems Engineer`
+    ].join(","),
+    "request-provider: Postgres snapshot projection mismatch"
+  )
+
+  await verifyEventJournalCount("request-provider", "request_provider_event_journal", requestId, 10)
+}
+
+const verifyPIIPostgresProjection = async (
+  storageKey: string,
+  subjectRequestId: string,
+  erasureRequestId: string
+) => {
+  const escapedStorageKey = sqlString(storageKey)
+  const escapedSubjectRequestId = sqlString(subjectRequestId)
+  const escapedErasureRequestId = sqlString(erasureRequestId)
+
+  const recordState = await runStep("pii-provider: verify Postgres record projection", () =>
+    queryPostgresScalar(`
+      SELECT status || ':' || revision
+      FROM pii_provider_records
+      WHERE storage_key = ${escapedStorageKey}
+    `)
+  )
+  assertEqual(recordState, "DELETED:14", "pii-provider: Postgres record projection mismatch")
+
+  const auditCount = Number(await runStep("pii-provider: verify Postgres audit projection", () =>
+    queryPostgresScalar(`
+      SELECT count(*)
+      FROM pii_provider_audit_log
+      WHERE storage_key = ${escapedStorageKey}
+    `)
+  ))
+  assertEqual(auditCount, 14, "pii-provider: Postgres audit projection mismatch")
+
+  const subjectRequestStatus = await runStep("pii-provider: verify Postgres access request projection", () =>
+    queryPostgresScalar(`
+      SELECT status
+      FROM pii_provider_subject_requests
+      WHERE request_id = ${escapedSubjectRequestId}
+        AND storage_key = ${escapedStorageKey}
+    `)
+  )
+  assertEqual(subjectRequestStatus, "COMPLETED", "pii-provider: Postgres subject request projection mismatch")
+
+  const erasureRequestStatus = await runStep("pii-provider: verify Postgres erasure request projection", () =>
+    queryPostgresScalar(`
+      SELECT status
+      FROM pii_provider_subject_requests
+      WHERE request_id = ${escapedErasureRequestId}
+        AND storage_key = ${escapedStorageKey}
+    `)
+  )
+  assertEqual(erasureRequestStatus, "COMPLETED", "pii-provider: Postgres erasure request projection mismatch")
+
+  const requestTypes = await runStep("pii-provider: verify Postgres subject request types", () =>
+    queryPostgresScalar(`
+      SELECT string_agg(request_type || ':' || status, ',' ORDER BY request_type)
+      FROM pii_provider_subject_requests
+      WHERE storage_key = ${escapedStorageKey}
+    `)
+  )
+  assertEqual(
+    requestTypes,
+    "ACCESS:COMPLETED,ERASURE:COMPLETED",
+    "pii-provider: Postgres subject request type mismatch"
+  )
+
+  await verifyEventJournalCount("pii-provider", "pii_provider_event_journal", storageKey, 14)
+}
+
 const testProfileProvider = async () => {
   const profileId = makeUuid()
   const profileJson = makeProfileDocument(profileId)
@@ -459,6 +679,12 @@ const testProfileProvider = async () => {
     "profile-provider: snapshot should preserve the snapshot document"
   )
 
+  await verifyProfilePostgresProjection(
+    profileId,
+    snapshotId,
+    `pii/profile/${profileId}/snapshot.json`
+  )
+
   await assertRejectsWithTag(
     "profile-provider: unknown profile read",
     () => profileClient.GetProfile({ profileId: makeUuid() }),
@@ -603,6 +829,8 @@ const testRequestProvider = async () => {
     "request-provider: history returned wrong snapshot order"
   )
 
+  await verifyRequestPostgresProjection(requestId, firstSnapshotId, secondSnapshotId)
+
   await assertRejectsWithTag(
     "request-provider: unknown request read",
     () => requestClient.GetRequest({ requestId: makeUuid() }),
@@ -616,7 +844,8 @@ const testPIIProvider = async () => {
   const profileId = makeUuid()
   const recordId = makeUuid()
   const actorId = makeUuid()
-  const requestId = makeUuid()
+  const subjectRequestId = makeUuid()
+  const erasureRequestId = makeUuid()
   const record = makePIIRecord(recordId, profileId, actorId)
   const storageKey = `aggregate:${profileId}:1`
 
@@ -650,6 +879,64 @@ const testPIIProvider = async () => {
   assertEqual(pii.encryption.algorithm, "AES-256-GCM", "pii-provider: encryption metadata missing")
   assertEqual(pii.audit.accessCount, 1, "pii-provider: audited read should increment access count")
 
+  const piiByEntity = await runStep("pii-provider: GetPIIRecordByEntity", () =>
+    piiClient.GetPIIRecordByEntity({
+      entityReference: record.entityReference,
+      actorId: actorId,
+      actorType: "SYSTEM",
+      purpose: "SMOKE_TEST_ENTITY_READ"
+    })
+  )
+  assertEqual(piiByEntity.id, recordId, "pii-provider: GetPIIRecordByEntity returned wrong record id")
+  assertEqual(piiByEntity.audit.accessCount, 2, "pii-provider: entity read should increment access count")
+
+  const patched = await runStep("pii-provider: PatchPIIRecord", () =>
+    piiClient.PatchPIIRecord({
+      storageKey: storageKey,
+      personalData: {
+        personalIdentity: {
+          fullName: {
+            firstName: "Ada",
+            lastName: "Byron",
+            middleName: "Augusta"
+          },
+          citizenship: ["RU", "GB"]
+        },
+        contactData: {
+          phones: [{ number: "+79007654321", type: "MOBILE", verified: true }],
+          emails: [{ address: "ada.byron@example.test", type: "PERSONAL", verified: true }],
+          messengers: [{ platform: "TELEGRAM", identifier: "@ada_byron" }]
+        },
+        socialProfiles: [
+          { platform: "GITHUB", profileUrl: "https://github.com/ada-byron", username: "ada-byron" }
+        ]
+      },
+      actorId: actorId,
+      reason: "Patch smoke-test personal data"
+    })
+  )
+  assertEqual(patched.revision, 4, "pii-provider: PatchPIIRecord should advance revision after two reads")
+
+  const patchedRead = await runStep("pii-provider: GetPIIRecord patched", () =>
+    piiClient.GetPIIRecord({
+      storageKey: storageKey,
+      actorId: actorId,
+      actorType: "USER",
+      purpose: "SMOKE_TEST_PATCH_VERIFY"
+    })
+  )
+  assertEqual(
+    patchedRead.personalIdentity?.fullName?.middleName,
+    "Augusta",
+    "pii-provider: PatchPIIRecord did not update decrypted identity"
+  )
+  assertEqual(
+    patchedRead.contactData?.emails?.[0]?.address,
+    "ada.byron@example.test",
+    "pii-provider: PatchPIIRecord did not update decrypted contact data"
+  )
+  assertEqual(patchedRead.audit.accessCount, 3, "pii-provider: patched read should increment access count")
+
   const consent = await runStep("pii-provider: UpdatePIIConsent", () =>
     piiClient.UpdatePIIConsent({
       storageKey: storageKey,
@@ -659,7 +946,7 @@ const testPIIProvider = async () => {
       actorId: actorId
     })
   )
-  assertEqual(consent.revision, 3, "pii-provider: UpdatePIIConsent should advance revision after audited read")
+  assertEqual(consent.revision, 6, "pii-provider: UpdatePIIConsent should advance revision after patch verification")
 
   const access = await runStep("pii-provider: RecordPIIAccess", () =>
     piiClient.RecordPIIAccess({
@@ -670,39 +957,135 @@ const testPIIProvider = async () => {
       success: true
     })
   )
-  assertEqual(access.revision, 4, "pii-provider: RecordPIIAccess should advance revision after consent update")
+  assertEqual(access.revision, 7, "pii-provider: RecordPIIAccess should advance revision after consent update")
+
+  const withdrawn = await runStep("pii-provider: WithdrawPIIConsent", () =>
+    piiClient.WithdrawPIIConsent({
+      storageKey: storageKey,
+      reason: "smoke-test consent withdrawal",
+      retainForLegal: true,
+      actorId: actorId
+    })
+  )
+  assertEqual(withdrawn.revision, 8, "pii-provider: WithdrawPIIConsent should advance revision after manual access")
+
+  const subjectCreated = await runStep("pii-provider: CreateSubjectRequest", () =>
+    piiClient.CreateSubjectRequest({
+      storageKey: storageKey,
+      requestId: subjectRequestId,
+      requestType: "ACCESS",
+      notes: "smoke-test access export",
+      actorId: actorId
+    })
+  )
+  assertEqual(subjectCreated.revision, 9, "pii-provider: CreateSubjectRequest should advance revision after withdrawal")
+
+  const subjectCompleted = await runStep("pii-provider: CompleteSubjectRequest", () =>
+    piiClient.CompleteSubjectRequest({
+      storageKey: storageKey,
+      requestId: subjectRequestId,
+      status: "COMPLETED",
+      notes: "smoke-test access export completed",
+      actorId: actorId
+    })
+  )
+  assertEqual(subjectCompleted.revision, 10, "pii-provider: CompleteSubjectRequest should advance revision")
+
+  const rotated = await runStep("pii-provider: RotatePIIKey", () =>
+    piiClient.RotatePIIKey({
+      storageKey: storageKey,
+      reason: "smoke-test key rotation",
+      actorId: actorId
+    })
+  )
+  assertEqual(rotated.revision, 11, "pii-provider: RotatePIIKey should advance revision")
+
+  const failedAccess = await runStep("pii-provider: RecordPIIAccess failed", () =>
+    piiClient.RecordPIIAccess({
+      storageKey: storageKey,
+      actorId: actorId,
+      actorType: "SYSTEM",
+      purpose: "SMOKE_TEST_FAILED_READ",
+      success: false,
+      failureReason: "simulated authorization denial"
+    })
+  )
+  assertEqual(failedAccess.revision, 12, "pii-provider: failed RecordPIIAccess should be audited")
 
   const audit = await runStep("pii-provider: GetPIIAuditLog", () =>
     piiClient.GetPIIAuditLog({ storageKey: storageKey })
   )
-  assertEqual(audit.total, 4, "pii-provider: audit log should include create, read, consent update, and access")
+  assertEqual(audit.total, 12, "pii-provider: audit log should include all pre-erasure operations")
   assertArrayEqual(
     audit.auditEntries.map((entry) => entry.action),
-    ["CREATE", "READ", "UPDATE", "READ"],
+    [
+      "CREATE",
+      "READ",
+      "READ",
+      "UPDATE",
+      "READ",
+      "UPDATE",
+      "READ",
+      "UPDATE",
+      "UPDATE",
+      "UPDATE",
+      "UPDATE",
+      "READ"
+    ],
     "pii-provider: audit log returned wrong action sequence"
+  )
+  assertEqual(
+    audit.auditEntries.at(-1)?.failureReason,
+    "simulated authorization denial",
+    "pii-provider: failed access audit should preserve failure reason"
+  )
+
+  const history = await runStep("pii-provider: GetPIIHistory", () =>
+    piiClient.GetPIIHistory({ storageKey: storageKey })
+  )
+  assertEqual(history.currentRevision, 12, "pii-provider: history should reflect pre-erasure revision")
+  assertEqual(history.requests.length, 1, "pii-provider: history should include completed access request")
+  assertEqual(history.requests[0]?.status, "COMPLETED", "pii-provider: history should mark access request completed")
+  assertArrayEqual(
+    history.revisions.map((entry) => entry.eventType),
+    [
+      "PIIRecordCreated",
+      "PIIRecordAccessed",
+      "PIIRecordAccessed",
+      "PIIRecordUpdated",
+      "PIIRecordAccessed",
+      "PIIConsentUpdated",
+      "PIIRecordAccessed",
+      "PIIConsentWithdrawn",
+      "PIISubjectRequestCreated",
+      "PIISubjectRequestCompleted",
+      "PIIKeyRotated",
+      "PIIRecordAccessed"
+    ],
+    "pii-provider: history returned wrong pre-erasure event sequence"
   )
 
   const erasure = await runStep("pii-provider: RequestPIIErasure", () =>
     piiClient.RequestPIIErasure({
       storageKey: storageKey,
-      requestId: requestId,
+      requestId: erasureRequestId,
       reason: "smoke-test erasure",
       immediate: true,
       actorId: actorId
     })
   )
   assertEqual(erasure.status, "PENDING_DELETION", "pii-provider: erasure request should mark pending deletion")
-  assertEqual(erasure.revision, 5, "pii-provider: erasure request should advance revision after access")
+  assertEqual(erasure.revision, 13, "pii-provider: erasure request should advance revision after pre-erasure lifecycle")
 
   const deleted = await runStep("pii-provider: CompletePIIErasure", () =>
     piiClient.CompletePIIErasure({
       storageKey: storageKey,
-      requestId: requestId,
+      requestId: erasureRequestId,
       actorId: actorId
     })
   )
   assertEqual(deleted.status, "DELETED", "pii-provider: erasure completion should delete the record")
-  assertEqual(deleted.revision, 6, "pii-provider: erasure completion should advance revision after request")
+  assertEqual(deleted.revision, 14, "pii-provider: erasure completion should advance revision after request")
 
   await assertRejectsWithTag(
     "pii-provider: deleted record read",
@@ -714,6 +1097,7 @@ const testPIIProvider = async () => {
     }),
     "PIINotFound"
   )
+  await verifyPIIPostgresProjection(storageKey, subjectRequestId, erasureRequestId)
 
   console.log(`pii-provider: encrypted storage lifecycle ok (${storageKey})`)
 }

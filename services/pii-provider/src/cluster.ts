@@ -3,11 +3,9 @@
  *
  * Required:
  *   DATABASE_URL    PostgreSQL connection string
- *   CLICKHOUSE_URL  ClickHouse HTTP URL, e.g. http://localhost:8123
  *   PII_MASTER_KEY  Master key for local envelope encryption outside local/test
  *
  * Optional:
- *   CLICKHOUSE_DATABASE  ClickHouse database (default: default)
  *   HOST                 Runner advertised host (default: 127.0.0.1)
  *   PORT                 Runner cluster port
  *   API_PORT             Public JSON-RPC / health port (default: 4120)

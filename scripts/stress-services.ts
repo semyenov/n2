@@ -1,14 +1,18 @@
+import * as DateTime from "effect/DateTime"
 import { makeFetchClient } from "@semyenov/n2/helpers"
+import { PIIProviderRpcs } from "../services/pii-provider/src/contracts/commands.js"
 import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts/commands.js"
 import { RequestProviderRpcs } from "../services/request-provider/src/contracts/commands.js"
 
 const profileBaseUrl = process.env.PROFILE_PROVIDER_BASE_URL ?? "http://127.0.0.1:4100"
 const requestBaseUrl = process.env.REQUEST_PROVIDER_BASE_URL ?? "http://127.0.0.1:4110"
+const piiBaseUrl = process.env.PII_PROVIDER_BASE_URL ?? "http://127.0.0.1:4120"
 
 const profileClient = makeFetchClient(ProfileProviderRpcs, `${profileBaseUrl}/rpc/profile-provider`)
 const requestClient = makeFetchClient(RequestProviderRpcs, `${requestBaseUrl}/rpc/request-provider`)
+const piiClient = makeFetchClient(PIIProviderRpcs, `${piiBaseUrl}/rpc/pii-provider`)
 
-const allServices = ["profile-provider", "request-provider"] as const
+const allServices = ["profile-provider", "request-provider", "pii-provider"] as const
 type ServiceName = typeof allServices[number]
 
 interface WorkUnit {
@@ -32,7 +36,9 @@ const serviceAliases: Record<string, ServiceName> = {
   profile: "profile-provider",
   "profile-provider": "profile-provider",
   request: "request-provider",
-  "request-provider": "request-provider"
+  "request-provider": "request-provider",
+  pii: "pii-provider",
+  "pii-provider": "pii-provider"
 }
 
 const parsePositiveInt = (name: string, defaultValue: number) => {
@@ -221,6 +227,56 @@ const makeRequestDocument = (requestId: string, index: number, position: string)
   }
 })
 
+const makePIIRecord = (recordId: string, profileId: string, actorId: string, index: number) => ({
+  id: recordId,
+  schemaVersion: "1.0.0",
+  entityReference: {
+    entityId: profileId,
+    entityType: "AGGREGATE" as const,
+    entityVersion: 1
+  },
+  jurisdiction: {
+    countryCode: "RU",
+    applicableLaws: ["152-FZ" as const],
+    dataResidency: "RU"
+  },
+  personalIdentity: {
+    fullName: {
+      firstName: "Stress",
+      lastName: `Subject ${index}`
+    },
+    citizenship: ["RU"]
+  },
+  contactData: {
+    phones: [{ number: `+7900${String(index).padStart(7, "0")}`, type: "MOBILE" as const, verified: true }],
+    emails: [{ address: `stress-pii-${index}@example.test`, type: "WORK" as const, verified: true }]
+  },
+  consent: {
+    given: true,
+    givenAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
+    consentVersion: "1.0",
+    purposes: ["PROFILE_MATCHING" as const],
+    withdrawalRequested: false
+  },
+  dataSubjectRequests: [],
+  retention: {
+    policyId: "stress-retention-ru",
+    retentionPeriodDays: 1095,
+    legalHold: false
+  },
+  audit: {
+    createdAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
+    createdBy: actorId,
+    accessCount: 0
+  },
+  extractionInfo: {
+    extractedFields: ["personalIdentity.fullName", "contactData.emails"],
+    extractionMethod: "MANUAL" as const,
+    confidenceScores: { fullName: 1, emails: 1 }
+  },
+  status: "ACTIVE" as const
+})
+
 const stressProfileProvider = async (index: number) => {
   const profileId = makeUuid()
   const source = makeSource("profile", index)
@@ -228,6 +284,8 @@ const stressProfileProvider = async (index: number) => {
   const mergedDocument = makeProfileDocument(profileId, index, "Principal Effect Engineer")
   const snapshotDocument = makeProfileDocument(profileId, index, "Staff Platform Engineer")
   const snapshotId = `stress-profile-snapshot-${profileId}`
+  const createPiiStorageKey = `pii/profile/${profileId}/stress-create.json`
+  const snapshotPiiStorageKey = `pii/profile/${profileId}/stress-snapshot.json`
 
   await record("profile-provider CreateProfile", () =>
     profileClient.CreateProfile({
@@ -237,9 +295,9 @@ const stressProfileProvider = async (index: number) => {
       schemaVersion: "1.0.0",
       maskedProfileJson: createdDocument,
       metadataJson: json({ source: "stress-test", iteration: index, stage: "create" }),
-      piiStorageKey: "",
-      piiJson: "",
-      piiJurisdiction: "",
+      piiStorageKey: createPiiStorageKey,
+      piiJson: json({ email: `stress-profile-${index}@example.test`, phone: `+4915100${String(index).padStart(4, "0")}` }),
+      piiJurisdiction: "DE",
       actorId: "stress-agent",
       summary: "Create profile from stress test",
       sources: [source]
@@ -271,11 +329,22 @@ const stressProfileProvider = async (index: number) => {
       schemaVersion: "1.2.0",
       profileJson: snapshotDocument,
       metadataJson: json({ source: "stress-test", iteration: index, stage: "snapshot" }),
-      piiStorageKey: "",
-      piiJson: "",
-      piiJurisdiction: "",
+      piiStorageKey: snapshotPiiStorageKey,
+      piiJson: json({ passport: `stress-passport-${index}`, taxId: `stress-tax-${index}` }),
+      piiJurisdiction: "DE",
       actorId: "stress-agent",
       summary: "Create profile snapshot from stress test"
+    })
+  )
+
+  await record("profile-provider PublishProfileSnapshot", () =>
+    profileClient.PublishProfileSnapshot({
+      profileId,
+      snapshotId,
+      strategyJson: json({ source: "stress-test", iteration: index, visibility: "internal" }),
+      metadataJson: json({ source: "stress-test", iteration: index, stage: "publish" }),
+      schemaVersion: "1.2.0",
+      actorId: "stress-agent"
     })
   )
 
@@ -285,6 +354,14 @@ const stressProfileProvider = async (index: number) => {
 
   if (profile.profileId !== profileId || profile.status === "empty") {
     throw new Error(`profile-provider returned invalid profile state for ${profileId}`)
+  }
+  if (
+    profile.status !== "published" ||
+    profile.latestPiiStorageKey !== snapshotPiiStorageKey ||
+    profile.piiJurisdiction !== "DE" ||
+    profile.publishedSnapshotId !== snapshotId
+  ) {
+    throw new Error(`profile-provider returned incomplete published profile state for ${profileId}`)
   }
 
   await record("profile-provider GetProfileHistory", () =>
@@ -351,12 +428,87 @@ const stressRequestProvider = async (index: number) => {
   )
 }
 
+const stressPIIProvider = async (index: number) => {
+  const profileId = makeUuid()
+  const recordId = makeUuid()
+  const actorId = makeUuid()
+  const piiRecord = makePIIRecord(recordId, profileId, actorId, index)
+  const storageKey = `aggregate:${profileId}:1`
+
+  const created = await record("pii-provider CreatePIIRecord", () =>
+    piiClient.CreatePIIRecord({
+      record: piiRecord,
+      actorId,
+      summary: "Create PII record from stress test"
+    })
+  )
+
+  if (created.storageKey !== storageKey || created.status !== "ACTIVE") {
+    throw new Error(`pii-provider returned invalid created state for ${storageKey}`)
+  }
+
+  const pii = await record("pii-provider GetPIIRecord", () =>
+    piiClient.GetPIIRecord({
+      storageKey,
+      actorId,
+      actorType: "USER",
+      purpose: "STRESS_TEST_READ"
+    })
+  )
+
+  if (pii.id !== recordId || pii.personalIdentity?.fullName?.firstName !== "Stress") {
+    throw new Error(`pii-provider returned invalid decrypted record for ${storageKey}`)
+  }
+
+  const consent = await record("pii-provider UpdatePIIConsent", () =>
+    piiClient.UpdatePIIConsent({
+      storageKey,
+      given: true,
+      purposes: ["PROFILE_MATCHING", "COMMUNICATION"],
+      consentVersion: "2.0",
+      actorId
+    })
+  )
+
+  if (consent.status !== "ACTIVE") {
+    throw new Error(`pii-provider returned invalid consent state for ${storageKey}`)
+  }
+
+  await record("pii-provider RecordPIIAccess", () =>
+    piiClient.RecordPIIAccess({
+      storageKey,
+      actorId,
+      actorType: "USER",
+      purpose: "STRESS_TEST_PROFILE_VIEW",
+      success: true
+    })
+  )
+
+  const audit = await record("pii-provider GetPIIAuditLog", () =>
+    piiClient.GetPIIAuditLog({ storageKey })
+  )
+
+  if (audit.total < 4) {
+    throw new Error(`pii-provider returned incomplete audit log for ${storageKey}`)
+  }
+
+  const history = await record("pii-provider GetPIIHistory", () =>
+    piiClient.GetPIIHistory({ storageKey })
+  )
+
+  if (history.currentRevision < 4) {
+    throw new Error(`pii-provider returned incomplete history for ${storageKey}`)
+  }
+}
+
 const runUnit = (unit: WorkUnit) => {
   switch (unit.service) {
     case "profile-provider":
       return stressProfileProvider(unit.index)
     case "request-provider":
       return stressRequestProvider(unit.index)
+    case "pii-provider":
+      return stressPIIProvider(unit.index)
   }
 }
 
@@ -406,7 +558,11 @@ await Promise.all(
   services.map((service) =>
     waitForHealth(
       service,
-      service === "profile-provider" ? profileBaseUrl : requestBaseUrl
+      service === "profile-provider"
+        ? profileBaseUrl
+        : service === "request-provider"
+          ? requestBaseUrl
+          : piiBaseUrl
     )
   )
 )

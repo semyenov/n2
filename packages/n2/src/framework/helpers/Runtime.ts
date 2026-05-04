@@ -2,6 +2,7 @@ import * as Config from "effect/Config"
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
 import * as Option from "effect/Option"
+import * as Redacted from "effect/Redacted"
 import { BunClusterHttp } from "@effect/platform-bun"
 import { ClusterWorkflowEngine } from "@effect/cluster"
 import * as Reactivity from "@effect/experimental/Reactivity"
@@ -11,6 +12,7 @@ import { RpcSerialization, RpcServer } from "@effect/rpc"
 import type * as Rpc from "@effect/rpc/Rpc"
 import type * as RpcGroup from "@effect/rpc/RpcGroup"
 import { Migrator } from "@effect/sql"
+import { SqlClient } from "@effect/sql/SqlClient"
 import { PgClient } from "@effect/sql-pg"
 import { WorkflowEngine } from "@effect/workflow"
 import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
@@ -69,7 +71,8 @@ export const makeMigrationsLayer = (
 export const makeConfiguredClickhouseLayer = () =>
   Layer.unwrapEffect(
     Effect.gen(function* () {
-      const url = yield* Config.string("CLICKHOUSE_URL")
+      const redactedUrl = yield* Config.redacted("CLICKHOUSE_URL")
+      const url = Redacted.value(redactedUrl)
       const database = yield* Config.string("CLICKHOUSE_DATABASE").pipe(Config.withDefault("default"))
 
       return Layer.scoped(
@@ -151,12 +154,6 @@ export interface ServiceInfrastructureConfig<
   ProjectionStoreOut,
   ProjectionStoreErr,
   ProjectionStoreReq,
-  ClickhouseOut,
-  ClickhouseErr,
-  ClickhouseReq,
-  ClickhouseBootstrapOut,
-  ClickhouseBootstrapErr,
-  ClickhouseBootstrapReq,
   OutboxOut,
   OutboxErr,
   OutboxReq,
@@ -171,18 +168,24 @@ export interface ServiceInfrastructureConfig<
   PublishHandlersReq,
   PublisherOut,
   PublisherErr,
-  PublisherReq
+  PublisherReq,
+  ClickhouseOut = never,
+  ClickhouseErr = never,
+  ClickhouseReq = never,
+  ClickhouseBootstrapOut = never,
+  ClickhouseBootstrapErr = never,
+  ClickhouseBootstrapReq = never
 > {
   readonly eventLogLayer: Layer.Layer<EventLogOut, EventLogErr, EventLogReq>
   readonly projectionLayer: Layer.Layer<ProjectionOut, ProjectionErr, ProjectionReq>
   readonly projectionStoreLayer: Layer.Layer<ProjectionStoreOut, ProjectionStoreErr, ProjectionStoreReq>
-  readonly clickhouseLayer: Layer.Layer<ClickhouseOut, ClickhouseErr, ClickhouseReq>
-  readonly clickhouseBootstrapLayer: Layer.Layer<ClickhouseBootstrapOut, ClickhouseBootstrapErr, ClickhouseBootstrapReq>
   readonly outboxLive: Layer.Layer<OutboxOut, OutboxErr, OutboxReq>
   readonly outboxWorkerLive: Layer.Layer<OutboxWorkerOut, OutboxWorkerErr, OutboxWorkerReq>
   readonly snapshotsLive: Layer.Layer<SnapshotsOut, SnapshotsErr, SnapshotsReq>
   readonly publishHandlers: Layer.Layer<PublishHandlersOut, PublishHandlersErr, PublishHandlersReq>
   readonly publisherLive: Layer.Layer<PublisherOut, PublisherErr, PublisherReq>
+  readonly clickhouseLayer?: Layer.Layer<ClickhouseOut, ClickhouseErr, ClickhouseReq>
+  readonly clickhouseBootstrapLayer?: Layer.Layer<ClickhouseBootstrapOut, ClickhouseBootstrapErr, ClickhouseBootstrapReq>
   readonly eventJournal?: EventJournalTableOptions
 }
 
@@ -196,12 +199,6 @@ export const makeServiceInfrastructureLayers = <
   ProjectionStoreOut,
   ProjectionStoreErr,
   ProjectionStoreReq,
-  ClickhouseOut,
-  ClickhouseErr,
-  ClickhouseReq,
-  ClickhouseBootstrapOut,
-  ClickhouseBootstrapErr,
-  ClickhouseBootstrapReq,
   OutboxOut,
   OutboxErr,
   OutboxReq,
@@ -216,7 +213,13 @@ export const makeServiceInfrastructureLayers = <
   PublishHandlersReq,
   PublisherOut,
   PublisherErr,
-  PublisherReq
+  PublisherReq,
+  ClickhouseOut = never,
+  ClickhouseErr = never,
+  ClickhouseReq = never,
+  ClickhouseBootstrapOut = never,
+  ClickhouseBootstrapErr = never,
+  ClickhouseBootstrapReq = never
 >(
   config: ServiceInfrastructureConfig<
     EventLogOut,
@@ -228,12 +231,6 @@ export const makeServiceInfrastructureLayers = <
     ProjectionStoreOut,
     ProjectionStoreErr,
     ProjectionStoreReq,
-    ClickhouseOut,
-    ClickhouseErr,
-    ClickhouseReq,
-    ClickhouseBootstrapOut,
-    ClickhouseBootstrapErr,
-    ClickhouseBootstrapReq,
     OutboxOut,
     OutboxErr,
     OutboxReq,
@@ -248,16 +245,26 @@ export const makeServiceInfrastructureLayers = <
     PublishHandlersReq,
     PublisherOut,
     PublisherErr,
-    PublisherReq
+    PublisherReq,
+    ClickhouseOut,
+    ClickhouseErr,
+    ClickhouseReq,
+    ClickhouseBootstrapOut,
+    ClickhouseBootstrapErr,
+    ClickhouseBootstrapReq
   >
 ) => {
   const identityLayer = Layer.succeed(Identity, Identity.makeRandom())
   const sqlJournalLayer = makeSqlEventJournalLayer(config.eventJournal)
+  const sqlClientLayer = Layer.service(SqlClient)
+  const clickhouseLayer = config.clickhouseLayer ?? Layer.empty
+  const clickhouseBootstrapLayer = config.clickhouseBootstrapLayer ?? Layer.empty
   const clickhouseReadyLayer = Layer.merge(
-    config.clickhouseLayer,
-    Layer.provide(config.clickhouseBootstrapLayer, config.clickhouseLayer)
+    clickhouseLayer,
+    Layer.provide(clickhouseBootstrapLayer, clickhouseLayer)
   )
-  const projectionStoreLayer = Layer.provide(config.projectionStoreLayer, clickhouseReadyLayer)
+  const projectionStoreRequirements = Layer.merge(sqlClientLayer, clickhouseReadyLayer)
+  const projectionStoreLayer = Layer.provide(config.projectionStoreLayer, projectionStoreRequirements)
 
   const WorkflowLayer = Layer.provideMerge(
     config.publishHandlers,

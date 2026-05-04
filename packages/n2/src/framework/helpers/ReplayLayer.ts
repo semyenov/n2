@@ -7,12 +7,12 @@ import {
 } from "./EventJournalLayer.js"
 
 export interface ReplayInfrastructureConfig<
-  CHO, CHE, CHR,
-  CHBO, CHBE, CHBR,
-  PSO, PSE, PSR
+  PSO, PSE, PSR,
+  CHO = never, CHE = never, CHR = never,
+  CHBO = never, CHBE = never, CHBR = never
 > {
-  readonly clickhouseLayer: Layer.Layer<CHO, CHE, CHR>
-  readonly clickhouseBootstrapLayer: Layer.Layer<CHBO, CHBE, CHBR>
+  readonly clickhouseLayer?: Layer.Layer<CHO, CHE, CHR>
+  readonly clickhouseBootstrapLayer?: Layer.Layer<CHBO, CHBE, CHBR>
   readonly projectionStoreLayer: Layer.Layer<PSO, PSE, PSR>
   readonly sqlLayer?: PgSqlLayer
   readonly eventJournal?: EventJournalTableOptions
@@ -26,27 +26,30 @@ const defaultSqlLayer = () =>
 type PgSqlLayer = ReturnType<typeof defaultSqlLayer>
 
 /**
- * Compose the standard replay infrastructure: SQL + EventJournal + ClickHouse
- * (with one-time bootstrap) + projection store. The ClickHouse-ready layer is
- * built exactly once and provided to both the projection store and the merged
- * output, eliminating the duplication seen in hand-rolled replay scripts.
+ * Compose the standard replay infrastructure: SQL + EventJournal + optional
+ * ClickHouse bootstrap + projection store. The projection store receives both
+ * SQL and ClickHouse layers so services can replay into either backend.
  */
 export const makeReplayInfrastructureLayer = <
-  CHO, CHE, CHR,
-  CHBO, CHBE, CHBR,
-  PSO, PSE, PSR
+  PSO, PSE, PSR,
+  CHO = never, CHE = never, CHR = never,
+  CHBO = never, CHBE = never, CHBR = never
 >(
-  config: ReplayInfrastructureConfig<CHO, CHE, CHR, CHBO, CHBE, CHBR, PSO, PSE, PSR>
+  config: ReplayInfrastructureConfig<PSO, PSE, PSR, CHO, CHE, CHR, CHBO, CHBE, CHBR>
 ) => {
   const sqlLayer = config.sqlLayer ?? defaultSqlLayer()
+  const clickhouseLayer = config.clickhouseLayer ?? Layer.empty
+  const clickhouseBootstrapLayer = config.clickhouseBootstrapLayer ?? Layer.empty
   const clickhouseReadyLayer = Layer.merge(
-    config.clickhouseLayer,
-    Layer.provide(config.clickhouseBootstrapLayer, config.clickhouseLayer)
+    clickhouseLayer,
+    Layer.provide(clickhouseBootstrapLayer, clickhouseLayer)
   )
+  const projectionStoreRequirements = Layer.merge(sqlLayer, clickhouseReadyLayer)
 
   return Layer.mergeAll(
+    sqlLayer,
     Layer.provide(makeSqlEventJournalLayer(config.eventJournal), sqlLayer),
     clickhouseReadyLayer,
-    Layer.provide(config.projectionStoreLayer, clickhouseReadyLayer)
+    Layer.provide(config.projectionStoreLayer, projectionStoreRequirements)
   )
 }

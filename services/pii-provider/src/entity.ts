@@ -159,6 +159,7 @@ export const PIIProviderEntityLayer = PIIProvider.toEntityLayer(
     toResult: ({ entityId, state }) => toCommandResult(entityId, state),
     toError,
     snapshots: PIIProviderSnapshotOps,
+    afterCommit,
     overrides
   },
   { maxIdleTime: "10 minutes", concurrency: "unbounded" }
