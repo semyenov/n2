@@ -9,7 +9,7 @@ import {
 const decodeRecord = Schema.decodeUnknownSync(PIIRecordInput)
 const decodeSensitive = Schema.decodeUnknownSync(SensitivePIIData)
 
-it("decodes the canonical PII record shape with snake_case fields", () => {
+it("decodes the canonical PII record shape with camelCase fields", () => {
   const record = decodeRecord({
     id: "550e8400-e29b-41d4-a716-446655440000",
     schemaVersion: "1.0.0",
@@ -55,7 +55,7 @@ it("decodes the canonical PII record shape with snake_case fields", () => {
       accessCount: 3
     },
     extractionInfo: {
-      extractedFields: ["user_data.personal_info.first_name"],
+      extractedFields: ["userData.personalInfo.firstName"],
       extractionMethod: "LLM_DETECTION",
       confidenceScores: { fullName: 0.99 }
     },

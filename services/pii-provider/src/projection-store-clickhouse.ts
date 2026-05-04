@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect"
 import * as Layer from "effect/Layer"
+import * as Clickhouse from "@clickhouse/client"
 import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
+import { SqlError } from "@effect/sql/SqlError"
 import type {
   AuditEntry,
   AuditSummary,
@@ -112,6 +114,37 @@ const applySubjectRequest = (
   return current.map((item) => item.requestId === request.requestId ? request : item)
 }
 
+const queryClickhouseRows = <Row extends object>(
+  client: Clickhouse.ClickHouseClient,
+  query: string,
+  query_params: Record<string, unknown>
+) =>
+  Effect.tryPromise({
+    try: async () => {
+      const result = await client.query({
+        query,
+        query_params,
+        format: "JSONEachRow"
+      })
+      return await result.json<Row>()
+    },
+    catch: (cause) => new SqlError({ cause, message: "Failed to execute ClickHouse query" })
+  })
+
+const loadLatestRecord = (client: Clickhouse.ClickHouseClient, storageKey: string) =>
+  queryClickhouseRows<RecordCurrentRow>(
+    client,
+    `SELECT storage_key, record_id, revision, status, schema_version,
+            entity_id, entity_type, entity_version, jurisdiction_json,
+            encrypted_data, encrypted_dek, encryption_json, consent_json,
+            subject_requests_json, retention_json, audit_json, extraction_info_json,
+            created_at, updated_at
+     FROM pii_provider_records_current
+     WHERE storage_key = {storageKey:String}
+     ORDER BY revision DESC LIMIT 1`,
+    { storageKey }
+  ).pipe(Effect.map((rows) => rows[0]))
+
 const insertProjectionEvent = (
   ch: ClickhouseClient.ClickhouseClient,
   event: PIIProviderEvent
@@ -180,10 +213,14 @@ const createdRecordRow = (event: PIIRecordCreated | PIIRecordStoredFromProfile) 
   })
 }
 
-export const PIIProviderProjectionStoreClickhouseLive = Layer.effect(
+export const PIIProviderProjectionStoreClickhouseLive = Layer.scoped(
   PIIProviderProjectionStore,
   Effect.gen(function* () {
     const ch = yield* ClickhouseClient.ClickhouseClient
+    const direct = yield* Effect.acquireRelease(
+      Effect.sync(() => Clickhouse.createClient(ch.config)),
+      (client) => Effect.promise(() => client.close())
+    )
     const rows = new Map<string, RecordCurrentRow>()
 
     const insertAndCache = (row: RecordCurrentRow) =>
@@ -191,13 +228,27 @@ export const PIIProviderProjectionStoreClickhouseLive = Layer.effect(
         Effect.tap(() => Effect.sync(() => rows.set(row.storage_key, row)))
       )
 
+    const getRecordRow = (storageKey: string) => {
+      const cached = rows.get(storageKey)
+      if (cached !== undefined) return Effect.succeed(cached)
+      return loadLatestRecord(direct, storageKey).pipe(
+        Effect.tap((row) =>
+          row === undefined
+            ? Effect.void
+            : Effect.sync(() => {
+                rows.set(storageKey, row)
+              })
+        )
+      )
+    }
+
     const updateRecord = (
       event: PIIProviderEvent,
       update: (current: RecordCurrentRow) => RecordCurrentRow,
       auditEntry?: AuditEntry
     ) =>
       Effect.gen(function* () {
-        const current = rows.get(event.storageKey)
+        const current = yield* getRecordRow(event.storageKey)
         yield* insertProjectionEvent(ch, event)
         if (current !== undefined) {
           yield* insertAndCache(update(current))

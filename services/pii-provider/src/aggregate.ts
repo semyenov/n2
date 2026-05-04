@@ -82,6 +82,15 @@ const ensureCreateAllowed = (state: PIIState) =>
     ? Effect.fail(new PIIError({ message: "PII record already exists" }))
     : Effect.void
 
+const ensureStorageKeyMatchesEntityReference = (storageKey: string, record: { readonly entityReference: PIIRecordInput["entityReference"] }) => {
+  const expectedStorageKey = storageKeyFromEntityReference(record.entityReference)
+  return storageKey === expectedStorageKey
+    ? Effect.void
+    : Effect.fail(new PIIError({
+        message: `PII storage key "${storageKey}" does not match entity reference "${expectedStorageKey}"`
+      }))
+}
+
 const makeAuditEntry = (
   action: AuditEntry["action"],
   actorId: string,
@@ -380,6 +389,7 @@ export const PIIProvider = N2.define<PIIProviderEvent, PIIProviderCommand>()({
     StoreExtractedPII: (state, command) =>
       Effect.gen(function* () {
         yield* ensureCreateAllowed(state)
+        yield* ensureStorageKeyMatchesEntityReference(command.storageKey, command)
         const now = yield* DateTime.now
         const sensitiveData = yield* parseExtractedPII(command.piiJson)
         const encryptedPayload = yield* encryptSensitiveData(command.storageKey, sensitiveData)
@@ -419,6 +429,7 @@ export const PIIProvider = N2.define<PIIProviderEvent, PIIProviderCommand>()({
       Effect.gen(function* () {
         yield* ensureCreateAllowed(state)
         const storageKey = command.storageKey ?? storageKeyFromEntityReference(command.record.entityReference)
+        yield* ensureStorageKeyMatchesEntityReference(storageKey, command.record)
         const now = yield* DateTime.now
         const encryptedPayload = yield* encryptSensitiveData(storageKey, sensitiveDataFromInput(command.record))
         return [

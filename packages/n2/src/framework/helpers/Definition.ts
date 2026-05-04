@@ -91,18 +91,25 @@ type AdapterR<A> =
   | (A extends { readonly afterCommit: infer AC } ? ExtractEffectR<AC> : never)
   | (A extends { readonly overrides: { readonly [k: string]: infer O } } ? ExtractEffectR<O> : never)
 
-type OverrideContext<State, _HooksR> = {
+type OverrideCommitResult<State, Event extends Tagged> = {
+  readonly events: ReadonlyArray<Event>
+  readonly state: State
+  readonly revision: number
+}
+
+type OverrideContext<State, Command extends Tagged, Event extends Tagged, _HooksR> = {
   readonly entityId: string
   // getState reads in-memory state and swallows snapshot errors via Effect.orElse,
   // so it never fails. Requirements are widened to unknown so both stateful and
   // entity-layer implementations satisfy this contract.
   readonly getState: (entityId: string) => Effect.Effect<State, never, unknown>
+  readonly commit: (command: Command) => Effect.Effect<OverrideCommitResult<State, Event>, unknown, unknown>
 }
 
-type OverrideHandlers<State, Command extends Tagged, HooksR> = {
+type OverrideHandlers<State, Command extends Tagged, Event extends Tagged, HooksR> = {
   readonly [K in TagOf<Command>]?: (
     command: Extract<Command, { readonly _tag: K }>,
-    ctx: OverrideContext<State, HooksR>
+    ctx: OverrideContext<State, Command, Event, HooksR>
   ) => Effect.Effect<unknown, unknown, HooksR>
 }
 
@@ -117,10 +124,13 @@ const instantiateCommand = <CurrentCommand extends Tagged>(
 ): CurrentCommand =>
   Reflect.construct(Command, [payload]) as CurrentCommand
 
-const runOverride = <State, Command extends Tagged, HooksR>(
-  override: (command: Command, ctx: OverrideContext<State, HooksR>) => Effect.Effect<unknown, unknown, HooksR>,
+const runOverride = <State, Command extends Tagged, Event extends Tagged, HooksR>(
+  override: (
+    command: Command,
+    ctx: OverrideContext<State, Command, Event, HooksR>
+  ) => Effect.Effect<unknown, unknown, HooksR>,
   command: Command,
-  ctx: OverrideContext<State, HooksR>
+  ctx: OverrideContext<State, Command, Event, HooksR>
 ): Effect.Effect<unknown, unknown, HooksR> => override(command, ctx)
 
 const dispatchHandler = <State, Cmd extends Tagged, Handlers, Event extends Tagged, Err, R>(
@@ -217,7 +227,7 @@ export interface EntityAdapterOptions<State, Command extends Tagged, Event, Resu
   /** Override specific command handlers (e.g. read queries). Bypasses dispatch entirely.
    *  Each key narrows the command to the specific tagged member for that tag.
    *  `getState` takes an entityId for API compatibility with stateful RPC overrides. */
-  readonly overrides?: OverrideHandlers<State, Command, HooksR>
+  readonly overrides?: OverrideHandlers<State, Command, Event & Tagged, HooksR>
 }
 
 /** Options for stateful multi-entity RPC handlers (dev/test mode). */
@@ -266,7 +276,7 @@ export interface StatefulRpcAdapterOptions<State, Command extends Tagged, Event,
   readonly maxEntries?: number
   /** Override specific command handlers (e.g. read queries).
    *  Each key narrows the command to the specific tagged member for that tag. */
-  readonly overrides?: OverrideHandlers<State, Command, HooksR>
+  readonly overrides?: OverrideHandlers<State, Command, Event & Tagged, HooksR>
 }
 
 /** Options for mapping execution results when wiring to stateless RPC handlers. */
@@ -456,6 +466,51 @@ export const define = <
           let revision = Option.match(initial.snapshot, { onNone: () => 0, onSome: ({ revision: r }) => r })
           const snapshotLoadError = initial.loadError
 
+          const commitCommand = (command: Command) =>
+            Effect.gen(function* () {
+              if (snapshotLoadFailure === "fail" && snapshotLoadError !== undefined) {
+                return yield* Effect.fail(adapter.toError(snapshotLoadError))
+              }
+              const state = yield* Ref.get(stateRef)
+              const result = yield* handle(state, command).pipe(
+                Effect.mapError((error) => adapter.toError(error))
+              )
+              let finalState = result.state
+              if (adapter.postHandle) {
+                finalState = adapter.postHandle({
+                  entityId: address.entityId,
+                  command,
+                  events: result.events,
+                  state: result.state
+                })
+              }
+              yield* Ref.set(stateRef, finalState)
+              revision += result.events.length
+
+              if (adapter.snapshots && revision > 0 && revision % adapter.snapshots.every === 0) {
+                yield* adapter.snapshots.save(address.entityId, finalState, revision).pipe(
+                  Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
+                  Effect.ignore
+                )
+              }
+
+              if (adapter.afterCommit && result.events.length > 0) {
+                yield* adapter.afterCommit({
+                  entityId: address.entityId,
+                  revision,
+                  command,
+                  events: result.events,
+                  state: finalState
+                }).pipe(
+                  Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
+                  Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
+                  Effect.ignore
+                )
+              }
+
+              return { events: result.events, state: finalState, revision }
+            })
+
           const handlers: Partial<Entity.HandlersFrom<Rpcs>> = {}
 
           for (const tag of commandTags(options.commands)) {
@@ -466,14 +521,17 @@ export const define = <
               // Runtime tag dispatch guarantees the command matches; cast isolates this here.
               const override = adapter.overrides[tag]! as (
                 command: Command,
-                ctx: OverrideContext<State, AdapterR<Adapter>>
+                ctx: OverrideContext<State, Command, Event & Tagged, AdapterR<Adapter>>
               ) => Effect.Effect<unknown, unknown, AdapterR<Adapter>>
               const OverrideCtor = commandsByTag[tag]
               handlers[handlerTag] = ((request: { readonly payload: unknown }) => {
                 const command = instantiateCommand(OverrideCtor, request.payload)
                 const run = runOverride(override, command, {
                   entityId: address.entityId,
-                  getState: (_id: string) => Ref.get(stateRef)
+                  getState: (_id: string) => Ref.get(stateRef),
+                  commit: commitCommand as (
+                    command: Command
+                  ) => Effect.Effect<OverrideCommitResult<State, Event & Tagged>, unknown, unknown>
                 })
                 const rejectSnapshotLoadFailure = snapshotLoadFailure === "fail" && snapshotLoadError !== undefined
                   ? Effect.fail(adapter.toError(snapshotLoadError))
@@ -496,53 +554,14 @@ export const define = <
                 if (adapter.middleware) {
                   yield* adapter.middleware({ entityId: address.entityId, command })
                 }
-                if (snapshotLoadFailure === "fail" && snapshotLoadError !== undefined) {
-                  return yield* Effect.fail(adapter.toError(snapshotLoadError))
-                }
-                const state = yield* Ref.get(stateRef)
-
-                return yield* handle(state, command).pipe(
-                  Effect.matchEffect({
-                    onFailure: (error) =>
-                      Effect.fail(adapter.toError(error)),
-                    onSuccess: (result) =>
-                      Effect.gen(function* () {
-                        let finalState = result.state
-                        if (adapter.postHandle) {
-                          finalState = adapter.postHandle({
-                            entityId: address.entityId, command, events: result.events, state: result.state
-                          })
-                        }
-                        yield* Ref.set(stateRef, finalState)
-                        revision += result.events.length
-
-                        if (adapter.snapshots && revision > 0 && revision % adapter.snapshots.every === 0) {
-                          yield* adapter.snapshots.save(address.entityId, finalState, revision).pipe(
-                            Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
-                            Effect.ignore
-                          )
-                        }
-
-                        if (adapter.afterCommit && result.events.length > 0) {
-                          yield* adapter.afterCommit({
-                            entityId: address.entityId, revision, command, events: result.events, state: finalState
-                          }).pipe(
-                            Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
-                            Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
-                            Effect.ignore
-                          )
-                        }
-
-                        return adapter.toResult({
-                          entityId: address.entityId,
-                          revision,
-                          command,
-                          events: result.events,
-                          state: finalState
-                        })
-                      })
-                  })
-                )
+                const result = yield* commitCommand(command)
+                return adapter.toResult({
+                  entityId: address.entityId,
+                  revision: result.revision,
+                  command,
+                  events: result.events,
+                  state: result.state
+                })
               })) as Entity.HandlersFrom<Rpcs>[typeof handlerTag]
           }
 
@@ -747,6 +766,59 @@ export const define = <
               )
             )
 
+          const commitCommand = (entityId: string, command: Command) =>
+            withCell(entityId, (cell) =>
+              SynchronizedRef.modifyEffect(cell.ref, (cellState) =>
+                ensureLoaded(entityId, cellState).pipe(
+                  Effect.flatMap((loaded) =>
+                    failIfSnapshotLoadFailed(loaded).pipe(
+                      Effect.zipRight(handle(loaded.entry.state, command)),
+                      Effect.mapError((error) => adapter.toError(error)),
+                      Effect.flatMap(({ events, state: next }) => {
+                        let finalState = next
+                        if (adapter.postHandle) {
+                          finalState = adapter.postHandle({
+                            entityId,
+                            command,
+                            events,
+                            state: next
+                          })
+                        }
+                        const nextRevision = loaded.entry.revision + events.length
+                        const nextEntry = { state: finalState, revision: nextRevision }
+                        const result = { events, state: finalState, revision: nextRevision }
+
+                        return Effect.gen(function* () {
+                          if (adapter.afterCommit && events.length > 0) {
+                            yield* adapter.afterCommit({
+                              entityId,
+                              revision: nextRevision,
+                              command,
+                              events,
+                              state: finalState
+                            }).pipe(
+                              Effect.timeout(adapter.afterCommitTimeout ?? "30 seconds"),
+                              Effect.tapError((e) => Effect.logWarning(`afterCommit timed out or failed: ${String(e)}`)),
+                              Effect.ignore
+                            )
+                          }
+
+                          if (adapter.snapshots && nextRevision > 0 && nextRevision % adapter.snapshots.every === 0) {
+                            yield* adapter.snapshots.save(entityId, finalState, nextRevision).pipe(
+                              Effect.tapError((e) => Effect.logWarning(`snapshot save failed: ${String(e)}`)),
+                              Effect.ignore
+                            )
+                          }
+
+                          return [result, { entry: nextEntry, initialized: true }] as const
+                        })
+                      })
+                    )
+                  )
+                )
+              )
+            )
+
           const handlers: Partial<RpcGroup.HandlersFrom<Rpcs>> = {}
 
           for (const tag of commandTags(options.commands)) {
@@ -757,12 +829,18 @@ export const define = <
               // Runtime tag dispatch guarantees the command matches; cast isolates this here.
               const override = adapter.overrides[tag]! as (
                 command: Command,
-                ctx: OverrideContext<State, AdapterR<Adapter>>
+                ctx: OverrideContext<State, Command, Event & Tagged, AdapterR<Adapter>>
               ) => Effect.Effect<unknown, unknown, AdapterR<Adapter>>
               handlers[handlerTag] = ((payload: unknown) => {
                 const command = instantiateCommand(commandsByTag[tag], payload)
                 const entityId = adapter.entityId(command)
-                const run = runOverride(override, command, { entityId, getState })
+                const run = runOverride(override, command, {
+                  entityId,
+                  getState,
+                  commit: ((innerCommand: Command) => commitCommand(entityId, innerCommand)) as (
+                    command: Command
+                  ) => Effect.Effect<OverrideCommitResult<State, Event & Tagged>, unknown, unknown>
+                })
                 const snapshotPreflight = getCellState(entityId).pipe(
                   Effect.flatMap(failIfSnapshotLoadFailed),
                   Effect.mapError(adapter.toError)

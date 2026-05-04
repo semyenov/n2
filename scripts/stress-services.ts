@@ -130,50 +130,50 @@ const makeSource = (kind: "profile" | "request", index: number) => ({
 
 const makeProfileDocument = (profileId: string, index: number, position: string) => ({
   uuid: profileId,
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-02T00:00:00.000Z",
-  user_data: {
-    personal_info: {
-      first_name: "Load",
-      last_name: "Tester",
-      relevant_position: position,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-02T00:00:00.000Z",
+  userData: {
+    personalInfo: {
+      firstName: "Load",
+      lastName: "Tester",
+      relevantPosition: position,
       citizenship: "GB",
       residence: "Berlin",
       relocation: true
     },
-    salary_expectations: {
+    salaryExpectations: {
       currency: "USD",
-      amount_from: 1000 + index,
-      amount_to: 1600 + index
+      amountFrom: 1000 + index,
+      amountTo: 1600 + index
     },
     skills: [
       {
         name: "TypeScript",
         level: "advanced",
-        years_of_experience: 5
+        yearsOfExperience: 5
       },
       {
         name: "Effect",
         level: "advanced",
-        years_of_experience: 3
+        yearsOfExperience: 3
       }
     ],
     education: [
       {
         degree: "Bachelor",
-        field_of_study: "Computer Science",
+        fieldOfStudy: "Computer Science",
         institution: "Stress Test University",
-        start_year: 2018,
-        end_year: 2022
+        startYear: 2018,
+        endYear: 2022
       }
     ]
   },
-  user_matching_data: {
-    application_history: [{ status: "generated", source: "stress-test" }]
+  userMatchingData: {
+    applicationHistory: [{ status: "generated", source: "stress-test" }]
   },
-  user_meta_data: {
+  userMetaData: {
     version: 1,
-    source_platform: "stress-test",
+    sourcePlatform: "stress-test",
     tags: ["stress", "profile-provider"]
   }
 })
@@ -181,41 +181,41 @@ const makeProfileDocument = (profileId: string, index: number, position: string)
 const makeRequestDocument = (requestId: string, index: number, position: string) => ({
   id: index + 1,
   uuid: requestId,
-  created_at: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-02T00:00:00.000Z",
-  vacancy_data: {
-    relevant_position: position,
+  createdAt: "2026-01-01T00:00:00.000Z",
+  updatedAt: "2026-01-02T00:00:00.000Z",
+  vacancyData: {
+    relevantPosition: position,
     company: "Stress Test Co",
     country: "Germany",
     location: "Berlin",
-    job_format: "remote",
+    jobFormat: "remote",
     industry: "SaaS",
     description: "Exercise service lifecycle load.",
-    technology_stack: ["TypeScript", "Effect"],
+    technologyStack: ["TypeScript", "Effect"],
     requirements: {
-      experience_years: 5,
-      hard_skills: [
+      experienceYears: 5,
+      hardSkills: [
         { name: "TypeScript", level: "advanced" },
         { name: "Effect", level: "advanced" }
       ],
-      soft_skills: [
+      softSkills: [
         { name: "communication", required: true }
       ],
       languages: [
         { name: "English", level: "C1", required: true }
       ]
     },
-    salary_offer: {
+    salaryOffer: {
       currency: "EUR",
-      amount_from: 7000 + index,
-      amount_to: 9000 + index
+      amountFrom: 7000 + index,
+      amountTo: 9000 + index
     },
     responsibilities: ["Exercise service APIs"],
-    employment_types: ["full_time"],
-    work_schedule: ["remote"]
+    employmentTypes: ["full_time"],
+    workSchedule: ["remote"]
   },
-  vacancy_meta_data: {
-    source_platform: "stress-test",
+  vacancyMetaData: {
+    sourcePlatform: "stress-test",
     version: 1,
     tags: ["stress", "request-provider"]
   }

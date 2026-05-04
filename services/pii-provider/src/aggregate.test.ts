@@ -117,7 +117,7 @@ it("CreatePIIRecord stores encrypted PII and keeps profile linkage", async () =>
 it("StoreExtractedPII accepts the profile-provider extraction payload shape", async () => {
   const actorId = makeUuid(11)
   const reference = makeReference(2)
-  const storageKey = "profile:pii:1"
+  const storageKey = storageKeyFromEntityReference(reference)
 
   const { state, events } = await run(handle(initialPIIState, new StoreExtractedPII({
     storageKey: storageKey,
@@ -135,6 +135,27 @@ it("StoreExtractedPII accepts the profile-provider extraction payload shape", as
   expect(events[0]?._tag).toBe("PIIRecordStoredFromProfile")
   const sensitive = await run(decryptSensitiveData(state))
   expect(sensitive.personalIdentity?.fullName?.firstName).toBe("Grace")
+})
+
+it("StoreExtractedPII rejects storage keys that do not match the entity reference", async () => {
+  const actorId = makeUuid(111)
+  const reference = makeReference(12)
+  const result = await Effect.runPromise(Effect.either(handle(initialPIIState, new StoreExtractedPII({
+    storageKey: "profile:pii:custom",
+    recordId: makeUuid(121),
+    schemaVersion: "1.0.0",
+    entityReference: reference,
+    jurisdiction: makeJurisdiction(),
+    piiJson: JSON.stringify(Schema.encodeSync(SensitivePIIData)(makeSensitive("Grace"))),
+    consent: makeConsent(),
+    actorId: actorId,
+    summary: "ingest PersonalDataExtracted"
+  })).pipe(Effect.provide(PIICryptoLive))))
+
+  expect(result._tag).toBe("Left")
+  if (result._tag === "Left") {
+    expect(result.left).toBeInstanceOf(PIIError)
+  }
 })
 
 it("PatchPIIRecord updates encrypted payload without exposing plaintext in state", async () => {
@@ -233,7 +254,10 @@ it("commands fail when the record does not exist", async () => {
 
 it("read commands are handled by entity overrides", async () => {
   const events = await run(handle(initialPIIState, new GetPIIRecord({
-    storageKey: "anything"
+    storageKey: "anything",
+    actorId: makeUuid(99),
+    actorType: "USER",
+    purpose: "test read"
   })).pipe(Effect.map((result) => result.events)))
 
   expect(events).toEqual([])

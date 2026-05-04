@@ -18,6 +18,7 @@ import {
   type PIIProviderCommand,
   PIIProviderEntity,
   PIIProviderRpcs,
+  RecordPIIAccess,
   storageKeyOfCommand
 } from "./contracts/commands.js"
 import { PIIAuditLog, storageKeyFromEntityReference } from "./contracts/common.js"
@@ -39,32 +40,74 @@ const toHistory = (state: PIIState) =>
     revisions: state.revisions
   })
 
+type ReadAuditCommand = Extract<PIIProviderCommand, {
+  readonly _tag: "GetPIIRecord" | "GetPIIRecordByEntity"
+}>
+
+type OverrideContext = {
+  readonly getState: (entityId: string) => Effect.Effect<PIIState, never, unknown>
+  readonly commit: (command: PIIProviderCommand) => Effect.Effect<{
+    readonly state: PIIState
+  }, unknown, unknown>
+}
+
 const ensureReadableState = (storageKey: string, state: PIIState) =>
   state.status === "empty" || state.status === "DELETED"
     ? Effect.fail(new PIINotFound({ storageKey }))
     : Effect.succeed(state)
 
-const getRecord = (storageKey: string, ctx: {
-  readonly getState: (entityId: string) => Effect.Effect<PIIState, never, unknown>
-}) =>
-  ctx.getState(storageKey).pipe(
-    Effect.flatMap((state) => ensureReadableState(storageKey, state)),
-    Effect.flatMap((state) =>
-      decryptSensitiveData(state).pipe(
-        Effect.map((sensitiveData) => toPIIRecordDocument(state, sensitiveData)),
-        Effect.mapError(() => new PIINotFound({ storageKey }))
+const recordReadAccess = (
+  storageKey: string,
+  command: ReadAuditCommand,
+  ctx: OverrideContext,
+  input: { readonly success: boolean; readonly failureReason?: string }
+) =>
+  ctx.commit(new RecordPIIAccess({
+    storageKey,
+    actorId: command.actorId,
+    actorType: command.actorType,
+    purpose: command.purpose,
+    ipAddress: command.ipAddress,
+    userAgent: command.userAgent,
+    success: input.success,
+    failureReason: input.failureReason
+  })).pipe(
+    Effect.map((result) => result.state)
+  )
+
+const getRecord = (
+  storageKey: string,
+  command: ReadAuditCommand,
+  ctx: OverrideContext
+) =>
+  Effect.gen(function* () {
+    const state = yield* ctx.getState(storageKey).pipe(
+      Effect.flatMap((current) => ensureReadableState(storageKey, current))
+    )
+    const sensitiveData = yield* decryptSensitiveData(state).pipe(
+      Effect.catchAll((error) =>
+        recordReadAccess(storageKey, command, ctx, {
+          success: false,
+          failureReason: error.message
+        }).pipe(
+          Effect.zipRight(Effect.fail(error))
+        )
       )
     )
-  )
+    const auditedState = yield* recordReadAccess(storageKey, command, ctx, { success: true })
+    return toPIIRecordDocument(auditedState, sensitiveData)
+  })
 
 const overrides = {
   GetPIIRecord: (command: Extract<PIIProviderCommand, { readonly _tag: "GetPIIRecord" }>, ctx: {
     readonly getState: (entityId: string) => Effect.Effect<PIIState, never, unknown>
-  }) => getRecord(command.storageKey, ctx),
+    readonly commit: (command: PIIProviderCommand) => Effect.Effect<{ readonly state: PIIState }, unknown, unknown>
+  }) => getRecord(command.storageKey, command, ctx),
 
   GetPIIRecordByEntity: (command: Extract<PIIProviderCommand, { readonly _tag: "GetPIIRecordByEntity" }>, ctx: {
     readonly getState: (entityId: string) => Effect.Effect<PIIState, never, unknown>
-  }) => getRecord(storageKeyFromEntityReference(command.entityReference), ctx),
+    readonly commit: (command: PIIProviderCommand) => Effect.Effect<{ readonly state: PIIState }, unknown, unknown>
+  }) => getRecord(storageKeyFromEntityReference(command.entityReference), command, ctx),
 
   GetPIIHistory: (command: Extract<PIIProviderCommand, { readonly _tag: "GetPIIHistory" }>, ctx: {
     readonly getState: (entityId: string) => Effect.Effect<PIIState, never, unknown>

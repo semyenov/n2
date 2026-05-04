@@ -120,6 +120,34 @@ it.effect("handle produces events and applies evolve", () => Effect.gen(function
   expect(events[0]?._tag).toBe("Incremented")
 }))
 
+it.effect("stateful override can commit an aggregate command", () =>
+  Effect.scoped(Effect.gen(function* () {
+    const entity = TestCommands.toEntity("AuditedCounter", () => "counter")
+    const handlers = Counter.toStatefulRpcHandlers(
+      entity.protocol,
+      {
+        entityId: () => "counter",
+        toResult: ({ state }) => state.count,
+        toError: (error) =>
+          error instanceof CounterError
+            ? error
+            : new CounterError({ message: String(error) }),
+        overrides: {
+          GetCount: (_command, ctx) =>
+            ctx.commit(new Increment({ amount: 1 })).pipe(
+              Effect.map((result) => result.state.count)
+            )
+        }
+      }
+    )
+
+    yield* Effect.gen(function* () {
+      const client = yield* RpcTest.makeClient(entity.protocol)
+      expect(yield* client.GetCount({})).toBe(1)
+      expect(yield* client.GetCount({})).toBe(2)
+    }).pipe(Effect.provide(handlers))
+  })))
+
 it.effect("handle accumulates state across events", () => Effect.gen(function* () {
   const { state: s1 } = yield* Counter.handle({ count: 0 }, new Increment({ amount: 3 }))
   const { state: s2 } = yield* Counter.handle(s1, new Increment({ amount: 7 }))

@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime"
 import { makeFetchClient } from "@semyenov/n2/helpers"
 import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts/commands.js"
 import { RequestProviderRpcs } from "../services/request-provider/src/contracts/commands.js"
@@ -38,6 +39,16 @@ const assertArrayEqual = (
   )
 }
 
+const runStep = async <A>(
+  name: string,
+  action: () => Promise<A>
+) => {
+  console.log(`${name}: start`)
+  const result = await action()
+  console.log(`${name}: ok`)
+  return result
+}
+
 const assertRejectsWithTag = async (
   name: string,
   action: () => Promise<unknown>,
@@ -60,6 +71,8 @@ const assertRejectsWithTag = async (
 const waitForHealth = async (name: string, url: string) => {
   const deadline = Date.now() + 30_000
   let lastError = ""
+
+  console.log(`${name}: waiting for health at ${url}/health`)
 
   while (Date.now() < deadline) {
     try {
@@ -102,12 +115,12 @@ const json = (value: unknown) => JSON.stringify(value)
 const makeProfileDocument = (profileId: string, position = "Senior TypeScript Engineer") => ({
   uuid: profileId,
   createdAt: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-02T00:00:00.000Z",
-  user_data: {
-    personal_info: {
+  updatedAt: "2026-01-02T00:00:00.000Z",
+  userData: {
+    personalInfo: {
       firstName: "Ada",
       lastName: "Lovelace",
-      relevant_position: position,
+      relevantPosition: position,
       citizenship: "GB",
       residence: "Berlin",
       relocation: true
@@ -118,30 +131,30 @@ const makeProfileDocument = (profileId: string, position = "Senior TypeScript En
       github: "ada-lovelace"
     },
     about: "Builds reliable TypeScript systems around Effect and distributed workflows.",
-    salary_expectations: {
+    salaryExpectations: {
       currency: "USD",
-      amount_from: 1000,
-      amount_to: 1600
+      amountFrom: 1000,
+      amountTo: 1600
     },
-    employment_types: ["full_time", "contract"],
-    work_schedule: ["remote", "flexible"],
+    employmentTypes: ["full_time", "contract"],
+    workSchedule: ["remote", "flexible"],
     skills: [
       {
         name: "TypeScript",
         level: "advanced",
-        years_of_experience: 5
+        yearsOfExperience: 5
       },
       {
         name: "Effect",
         level: "advanced",
-        years_of_experience: 3
+        yearsOfExperience: 3
       }
     ],
-    tools_proficiency: [
+    toolsProficiency: [
       { tool: "Bun", level: "advanced" },
       { tool: "PostgreSQL", level: "intermediate" }
     ],
-    soft_skills: ["written communication", "systems thinking"],
+    softSkills: ["written communication", "systems thinking"],
     languages: [
       { name: "English", level: "C2" },
       { name: "German", level: "B1" }
@@ -149,38 +162,37 @@ const makeProfileDocument = (profileId: string, position = "Senior TypeScript En
     education: [
       {
         degree: "Bachelor",
-        field_of_study: "Computer Science",
+        fieldOfStudy: "Computer Science",
         institution: "Analytical Engine Institute",
-        start_year: 2018,
-        end_year: 2022,
-        diploma_with_honors: true
+        startYear: 2018,
+        endYear: 2022,
+        diplomaWithHonors: true
       }
     ],
-    online_courses: [
+    onlineCourses: [
       { title: "Distributed Systems with TypeScript", platform: "Smoke Test Academy" }
     ],
-    work_experience: [
+    workExperience: [
       {
         position: "Platform Engineer",
         company: "Analytical Engine Labs",
-        start_date: "2022-01-01",
-        end_date: null,
-        job_format: "remote",
+        startDate: "2022-01-01",
+        jobFormat: "remote",
         responsibilities: ["Designed event-sourced services", "Maintained observability pipelines"],
-        skills_used: ["TypeScript", "Effect", "PostgreSQL"]
+        skillsUsed: ["TypeScript", "Effect", "PostgreSQL"]
       }
     ],
     portfolio: [
       { title: "Workflow orchestration demo", url: "https://example.test/portfolio/workflows" }
     ]
   },
-  user_matching_data: {
-    application_history: [{ status: "screened", source: "smoke-test" }],
-    feedback_history: [{ rating: 5, note: "strong distributed systems background" }]
+  userMatchingData: {
+    applicationHistory: [{ status: "screened", source: "smoke-test" }],
+    feedbackHistory: [{ rating: 5, note: "strong distributed systems background" }]
   },
-  user_meta_data: {
+  userMetaData: {
     version: 1,
-    source_platform: "smoke-test",
+    sourcePlatform: "smoke-test",
     tags: ["effect", "typescript", "distributed-systems"]
   }
 })
@@ -189,23 +201,23 @@ const makeRequestDocument = (requestId: string, position = "Senior TypeScript En
   id: Math.floor(Math.random() * 1_000_000),
   uuid: requestId,
   createdAt: "2026-01-01T00:00:00.000Z",
-  updated_at: "2026-01-02T00:00:00.000Z",
-  vacancy_data: {
-    relevant_position: position,
+  updatedAt: "2026-01-02T00:00:00.000Z",
+  vacancyData: {
+    relevantPosition: position,
     company: "Acme",
     country: "Germany",
     location: "Berlin",
-    job_format: "remote",
+    jobFormat: "remote",
     industry: "SaaS",
     description: "Own event-sourced service boundaries and operational tooling.",
-    technology_stack: ["TypeScript", "Effect"],
+    technologyStack: ["TypeScript", "Effect"],
     requirements: {
-      experience_years: 5,
-      hard_skills: [
+      experienceYears: 5,
+      hardSkills: [
         { name: "TypeScript", level: "advanced" },
         { name: "Effect", level: "advanced" }
       ],
-      soft_skills: [
+      softSkills: [
         { name: "cross-team communication", required: true },
         { name: "mentoring", required: false }
       ],
@@ -214,29 +226,29 @@ const makeRequestDocument = (requestId: string, position = "Senior TypeScript En
         { name: "German", level: "B1" }
       ],
       education: [
-        { degree: "Bachelor", field_of_study: "Computer Science", required: false }
+        { degree: "Bachelor", fieldOfStudy: "Computer Science", required: false }
       ],
       certifications: [
         { title: "Cloud architecture", required: false }
       ],
-      open_source_contributions: true,
-      team_leadership_experience: false,
-      portfolio_required: true
+      openSourceContributions: true,
+      teamLeadershipExperience: false,
+      portfolioRequired: true
     },
-    salary_offer: {
+    salaryOffer: {
       currency: "EUR",
-      amount_from: 7000,
-      amount_to: 9000,
+      amountFrom: 7000,
+      amountTo: 9000,
       bonus: "annual performance bonus"
     },
     responsibilities: ["Build service APIs", "Improve event replay tooling"],
-    employment_types: ["full_time"],
-    work_schedule: ["remote"],
+    employmentTypes: ["full_time"],
+    workSchedule: ["remote"],
     benefits: ["equipment budget", "conference budget"],
-    red_flags: ["legacy-only role"]
+    redFlags: ["legacy-only role"]
   },
-  vacancy_meta_data: {
-    source_platform: "smoke-test",
+  vacancyMetaData: {
+    sourcePlatform: "smoke-test",
     version: 1,
     tags: ["effect", "platform"]
   }
@@ -268,7 +280,7 @@ const makePIIRecord = (recordId: string, profileId: string, actorId: string) => 
   },
   consent: {
     given: true,
-    givenAt: "2026-01-01T00:00:00.000Z",
+    givenAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
     consentVersion: "1.0",
     purposes: ["PROFILE_MATCHING" as const],
     withdrawalRequested: false
@@ -280,12 +292,12 @@ const makePIIRecord = (recordId: string, profileId: string, actorId: string) => 
     legalHold: false
   },
   audit: {
-    createdAt: "2026-01-01T00:00:00.000Z",
+    createdAt: DateTime.unsafeMake("2026-01-01T00:00:00.000Z"),
     createdBy: actorId,
     accessCount: 0
   },
   extractionInfo: {
-    extractedFields: ["user_data.personal_info.first_name", "user_data.contacts.email"],
+    extractedFields: ["userData.personalInfo.firstName", "userData.contacts.email"],
     extractionMethod: "LLM_DETECTION" as const,
     confidenceScores: { fullName: 0.99, emails: 0.98 }
   },
@@ -301,94 +313,108 @@ const testProfileProvider = async () => {
   const extraSource = makeExtraSource("profile")
   const snapshotId = `snapshot-${profileId}`
 
-  const created = await profileClient.CreateProfile({
-    profileId,
-    ownerAgentId: "smoke-test-agent",
-    branchId: "main",
-    schemaVersion: "1.0.0",
-    maskedProfileJson: profileJson,
-    metadataJson: json({ source: "smoke-test", stage: "create" }),
-    piiStorageKey: `pii/profile/${profileId}/create.json`,
-    piiJson: json({ email: "ada@example.test", phone: "+4915123456789" }),
-    piiJurisdiction: "DE",
-    actorId: "smoke-test-agent",
-    summary: "Create profile from smoke test",
-    sources: [source]
-  })
+  console.log(`profile-provider: lifecycle start (${profileId})`)
+
+  const created = await runStep("profile-provider: CreateProfile", () =>
+    profileClient.CreateProfile({
+      profileId,
+      ownerAgentId: "smoke-test-agent",
+      branchId: "main",
+      schemaVersion: "1.0.0",
+      maskedProfileJson: profileJson,
+      metadataJson: json({ source: "smoke-test", stage: "create" }),
+      piiStorageKey: `pii/profile/${profileId}/create.json`,
+      piiJson: json({ email: "ada@example.test", phone: "+4915123456789" }),
+      piiJurisdiction: "DE",
+      actorId: "smoke-test-agent",
+      summary: "Create profile from smoke test",
+      sources: [source]
+    })
+  )
 
   assertEqual(created.profileId, profileId, "profile-provider: CreateProfile returned wrong profileId")
   assertEqual(created.revision, 3, "profile-provider: CreateProfile should produce revision 3 with PII")
 
-  const merged = await profileClient.MergeProfileData({
-    profileId,
-    branchId: "main",
-    schemaVersion: "1.1.0",
-    maskedProfileJson: mergedProfileJson,
-    metadataJson: json({ source: "smoke-test", stage: "merge", confidence: 0.98 }),
-    piiStorageKey: "",
-    piiJson: "",
-    piiJurisdiction: "",
-    actorId: "smoke-test-agent",
-    summary: "Merge richer profile data from smoke test",
-    sources: [
-      { ...source, summary: "profile smoke-test source updated by merge" },
-      extraSource
-    ]
-  })
+  const merged = await runStep("profile-provider: MergeProfileData", () =>
+    profileClient.MergeProfileData({
+      profileId,
+      branchId: "main",
+      schemaVersion: "1.1.0",
+      maskedProfileJson: mergedProfileJson,
+      metadataJson: json({ source: "smoke-test", stage: "merge", confidence: 0.98 }),
+      piiStorageKey: "",
+      piiJson: "",
+      piiJurisdiction: "",
+      actorId: "smoke-test-agent",
+      summary: "Merge richer profile data from smoke test",
+      sources: [
+        { ...source, summary: "profile smoke-test source updated by merge" },
+        extraSource
+      ]
+    })
+  )
 
   assertEqual(merged.revision, 5, "profile-provider: MergeProfileData should advance to revision 5")
 
-  const forked = await profileClient.ForkProfileBranch({
-    profileId,
-    branchId: "review",
-    label: "Review branch",
-    baseBranchId: "main",
-    baseRevision: merged.revision,
-    baseSnapshotId: "",
-    metadataJson: json({ source: "smoke-test", stage: "branch" }),
-    schemaVersion: "1.1.0",
-    actorId: "smoke-test-agent",
-    summary: "Fork review branch from smoke test"
-  })
+  const forked = await runStep("profile-provider: ForkProfileBranch", () =>
+    profileClient.ForkProfileBranch({
+      profileId,
+      branchId: "review",
+      label: "Review branch",
+      baseBranchId: "main",
+      baseRevision: merged.revision,
+      baseSnapshotId: "",
+      metadataJson: json({ source: "smoke-test", stage: "branch" }),
+      schemaVersion: "1.1.0",
+      actorId: "smoke-test-agent",
+      summary: "Fork review branch from smoke test"
+    })
+  )
 
   assertEqual(forked.branchId, "review", "profile-provider: ForkProfileBranch returned wrong active branch")
   assertEqual(forked.revision, 7, "profile-provider: ForkProfileBranch should advance to revision 7")
 
-  const snapshotted = await profileClient.CreateProfileSnapshot({
-    profileId,
-    branchId: "review",
-    snapshotId,
-    snapshotType: "MANUAL",
-    schemaVersion: "1.2.0",
-    profileJson: branchProfileJson,
-    metadataJson: json({ source: "smoke-test", stage: "snapshot", reviewer: "qa" }),
-    piiStorageKey: `pii/profile/${profileId}/snapshot.json`,
-    piiJson: json({ passport: "masked", taxId: "masked" }),
-    piiJurisdiction: "DE",
-    actorId: "smoke-test-agent",
-    summary: "Create profile snapshot from smoke test"
-  })
+  const snapshotted = await runStep("profile-provider: CreateProfileSnapshot", () =>
+    profileClient.CreateProfileSnapshot({
+      profileId,
+      branchId: "review",
+      snapshotId,
+      snapshotType: "MANUAL",
+      schemaVersion: "1.2.0",
+      profileJson: branchProfileJson,
+      metadataJson: json({ source: "smoke-test", stage: "snapshot", reviewer: "qa" }),
+      piiStorageKey: `pii/profile/${profileId}/snapshot.json`,
+      piiJson: json({ passport: "masked", taxId: "masked" }),
+      piiJurisdiction: "DE",
+      actorId: "smoke-test-agent",
+      summary: "Create profile snapshot from smoke test"
+    })
+  )
 
   assertEqual(snapshotted.revision, 10, "profile-provider: CreateProfileSnapshot should advance to revision 10 with PII")
 
-  const published = await profileClient.PublishProfileSnapshot({
-    profileId,
-    snapshotId,
-    strategyJson: json({ audience: "platform", priority: "high" }),
-    metadataJson: json({ source: "smoke-test", stage: "publish" }),
-    schemaVersion: "1.2.0",
-    actorId: "smoke-test-agent"
-  })
+  const published = await runStep("profile-provider: PublishProfileSnapshot", () =>
+    profileClient.PublishProfileSnapshot({
+      profileId,
+      snapshotId,
+      strategyJson: json({ audience: "platform", priority: "high" }),
+      metadataJson: json({ source: "smoke-test", stage: "publish" }),
+      schemaVersion: "1.2.0",
+      actorId: "smoke-test-agent"
+    })
+  )
 
   assertEqual(published.revision, 12, "profile-provider: PublishProfileSnapshot should advance to revision 12")
 
-  const profile = await profileClient.GetProfile({ profileId })
+  const profile = await runStep("profile-provider: GetProfile", () =>
+    profileClient.GetProfile({ profileId })
+  )
   assertEqual(profile.status, "published", "profile-provider: GetProfile should return published state")
   assertEqual(profile.activeBranchId, "review", "profile-provider: GetProfile should return review as active branch")
   assertEqual(profile.revision, 12, "profile-provider: GetProfile returned wrong revision")
   assertEqual(profile.maskedProfileJson?.uuid, profileId, "profile-provider: GetProfile returned wrong profile document")
   assertEqual(
-    profile.maskedProfileJson?.user_data.personal_info.relevant_position,
+    profile.maskedProfileJson?.userData.personalInfo.relevantPosition,
     "Principal Effect Engineer",
     "profile-provider: MergeProfileData did not update the current document"
   )
@@ -397,7 +423,9 @@ const testProfileProvider = async () => {
   assertEqual(profile.sourceAssets.length, 2, "profile-provider: source assets should be deduplicated and merged")
   assertEqual(profile.sourceAssets[0]?.summary, "profile smoke-test source updated by merge", "profile-provider: duplicate source should be overwritten")
 
-  const history = await profileClient.GetProfileHistory({ profileId })
+  const history = await runStep("profile-provider: GetProfileHistory", () =>
+    profileClient.GetProfileHistory({ profileId })
+  )
   assertEqual(history.currentRevision, 12, "profile-provider: history returned wrong current revision")
   assertEqual(history.publishedSnapshotId, snapshotId, "profile-provider: history returned wrong published snapshot")
   assertArrayEqual(
@@ -426,7 +454,7 @@ const testProfileProvider = async () => {
   assertEqual(history.snapshots.length, 1, "profile-provider: GetProfileHistory should include one snapshot")
   assertEqual(history.snapshots[0]?.published, true, "profile-provider: snapshot should be published")
   assertEqual(
-    history.snapshots[0]?.profileJson.user_data.personal_info.relevant_position,
+    history.snapshots[0]?.profileJson.userData.personalInfo.relevantPosition,
     "Principal Platform Engineer",
     "profile-provider: snapshot should preserve the snapshot document"
   )
@@ -451,89 +479,105 @@ const testRequestProvider = async () => {
   const firstSnapshotId = `snapshot-${requestId}-manual`
   const secondSnapshotId = `snapshot-${requestId}-llm`
 
-  const created = await requestClient.CreateRequest({
-    requestId,
-    clientId: "smoke-test-client",
-    schemaVersion: "1.0.0",
-    requestJson,
-    metadataJson: json({ source: "smoke-test", stage: "create" }),
-    actorId: "smoke-test-client",
-    summary: "Create request from smoke test",
-    sources: [source]
-  })
+  console.log(`request-provider: lifecycle start (${requestId})`)
+
+  const created = await runStep("request-provider: CreateRequest", () =>
+    requestClient.CreateRequest({
+      requestId,
+      clientId: "smoke-test-client",
+      schemaVersion: "1.0.0",
+      requestJson,
+      metadataJson: json({ source: "smoke-test", stage: "create" }),
+      actorId: "smoke-test-client",
+      summary: "Create request from smoke test",
+      sources: [source]
+    })
+  )
 
   assertEqual(created.requestId, requestId, "request-provider: CreateRequest returned wrong requestId")
   assertEqual(created.revision, 2, "request-provider: CreateRequest should produce revision 2")
 
-  const updated = await requestClient.UpdateRequest({
-    requestId,
-    schemaVersion: "1.1.0",
-    requestJson: updatedRequestJson,
-    metadataJson: json({ source: "smoke-test", stage: "update", score: 0.91 }),
-    actorId: "smoke-test-client",
-    summary: "Update request from smoke test",
-    sources: [
-      { ...source, summary: "request smoke-test source updated by update" },
-      extraSource
-    ]
-  })
+  const updated = await runStep("request-provider: UpdateRequest", () =>
+    requestClient.UpdateRequest({
+      requestId,
+      schemaVersion: "1.1.0",
+      requestJson: updatedRequestJson,
+      metadataJson: json({ source: "smoke-test", stage: "update", score: 0.91 }),
+      actorId: "smoke-test-client",
+      summary: "Update request from smoke test",
+      sources: [
+        { ...source, summary: "request smoke-test source updated by update" },
+        extraSource
+      ]
+    })
+  )
 
   assertEqual(updated.revision, 4, "request-provider: UpdateRequest should advance to revision 4")
 
-  const snapshotted = await requestClient.CreateRequestSnapshot({
-    requestId,
-    snapshotId: firstSnapshotId,
-    snapshotType: "MANUAL",
-    schemaVersion: "1.2.0",
-    requestJson: snapshotRequestJson,
-    metadataJson: json({ source: "smoke-test", stage: "manual-snapshot" }),
-    actorId: "smoke-test-client",
-    summary: "Create request snapshot from smoke test"
-  })
+  const snapshotted = await runStep("request-provider: CreateRequestSnapshot manual", () =>
+    requestClient.CreateRequestSnapshot({
+      requestId,
+      snapshotId: firstSnapshotId,
+      snapshotType: "MANUAL",
+      schemaVersion: "1.2.0",
+      requestJson: snapshotRequestJson,
+      metadataJson: json({ source: "smoke-test", stage: "manual-snapshot" }),
+      actorId: "smoke-test-client",
+      summary: "Create request snapshot from smoke test"
+    })
+  )
 
   assertEqual(snapshotted.revision, 6, "request-provider: CreateRequestSnapshot should advance to revision 6")
   assertEqual(snapshotted.latestSnapshotId, firstSnapshotId, "request-provider: first snapshot id not returned")
 
-  const updatedAfterSnapshot = await requestClient.UpdateRequest({
-    requestId,
-    schemaVersion: "1.3.0",
-    requestJson: finalRequestJson,
-    metadataJson: json({ source: "smoke-test", stage: "post-snapshot-update" }),
-    actorId: "smoke-test-client",
-    summary: "Update request after first snapshot from smoke test",
-    sources: []
-  })
+  const updatedAfterSnapshot = await runStep("request-provider: UpdateRequest after snapshot", () =>
+    requestClient.UpdateRequest({
+      requestId,
+      schemaVersion: "1.3.0",
+      requestJson: finalRequestJson,
+      metadataJson: json({ source: "smoke-test", stage: "post-snapshot-update" }),
+      actorId: "smoke-test-client",
+      summary: "Update request after first snapshot from smoke test",
+      sources: []
+    })
+  )
 
   assertEqual(updatedAfterSnapshot.revision, 8, "request-provider: second UpdateRequest should advance to revision 8")
 
-  const secondSnapshot = await requestClient.CreateRequestSnapshot({
-    requestId,
-    snapshotId: secondSnapshotId,
-    snapshotType: "LLM",
-    schemaVersion: "1.4.0",
-    requestJson: finalRequestJson,
-    metadataJson: json({ source: "smoke-test", stage: "llm-snapshot" }),
-    actorId: "smoke-test-client",
-    summary: "Create LLM request snapshot from smoke test"
-  })
+  const secondSnapshot = await runStep("request-provider: CreateRequestSnapshot LLM", () =>
+    requestClient.CreateRequestSnapshot({
+      requestId,
+      snapshotId: secondSnapshotId,
+      snapshotType: "LLM",
+      schemaVersion: "1.4.0",
+      requestJson: finalRequestJson,
+      metadataJson: json({ source: "smoke-test", stage: "llm-snapshot" }),
+      actorId: "smoke-test-client",
+      summary: "Create LLM request snapshot from smoke test"
+    })
+  )
 
   assertEqual(secondSnapshot.revision, 10, "request-provider: second snapshot should advance to revision 10")
   assertEqual(secondSnapshot.latestSnapshotId, secondSnapshotId, "request-provider: second snapshot id not returned")
 
-  const request = await requestClient.GetRequest({ requestId })
+  const request = await runStep("request-provider: GetRequest", () =>
+    requestClient.GetRequest({ requestId })
+  )
   assertEqual(request.status, "snapshotted", "request-provider: GetRequest should return snapshotted state")
   assertEqual(request.revision, 10, "request-provider: GetRequest returned wrong revision")
   assertEqual(request.currentSchemaVersion, "1.4.0", "request-provider: GetRequest returned wrong schema version")
   assertEqual(request.requestJson?.uuid, requestId, "request-provider: GetRequest returned wrong request document")
   assertEqual(
-    request.requestJson?.vacancy_data.relevant_position,
+    request.requestJson?.vacancyData.relevantPosition,
     "Staff Distributed Systems Engineer",
     "request-provider: final request document not preserved"
   )
   assertEqual(request.sourceAssets.length, 2, "request-provider: source assets should be deduplicated and merged")
   assertEqual(request.sourceAssets[0]?.summary, "request smoke-test source updated by update", "request-provider: duplicate source should be overwritten")
 
-  const history = await requestClient.GetRequestHistory({ requestId })
+  const history = await runStep("request-provider: GetRequestHistory", () =>
+    requestClient.GetRequestHistory({ requestId })
+  )
   assertEqual(history.currentRevision, 10, "request-provider: history returned wrong current revision")
   assertEqual(history.latestSnapshotId, secondSnapshotId, "request-provider: history returned wrong latest snapshot")
   assertArrayEqual(
@@ -576,16 +620,27 @@ const testPIIProvider = async () => {
   const record = makePIIRecord(recordId, profileId, actorId)
   const storageKey = `aggregate:${profileId}:1`
 
-  const created = await piiClient.CreatePIIRecord({
-    record,
-    actorId: actorId,
-    summary: "Create PII record from smoke test"
-  })
+  console.log(`pii-provider: lifecycle start (${storageKey})`)
+
+  const created = await runStep("pii-provider: CreatePIIRecord", () =>
+    piiClient.CreatePIIRecord({
+      record,
+      actorId: actorId,
+      summary: "Create PII record from smoke test"
+    })
+  )
 
   assertEqual(created.storageKey, storageKey, "pii-provider: CreatePIIRecord returned wrong storage key")
   assertEqual(created.status, "ACTIVE", "pii-provider: CreatePIIRecord returned wrong status")
 
-  const pii = await piiClient.GetPIIRecord({ storageKey: storageKey })
+  const pii = await runStep("pii-provider: GetPIIRecord", () =>
+    piiClient.GetPIIRecord({
+      storageKey: storageKey,
+      actorId: actorId,
+      actorType: "USER",
+      purpose: "SMOKE_TEST_READ"
+    })
+  )
   assertEqual(pii.id, recordId, "pii-provider: GetPIIRecord returned wrong record id")
   assertEqual(
     pii.personalIdentity?.fullName?.firstName,
@@ -593,50 +648,80 @@ const testPIIProvider = async () => {
     "pii-provider: GetPIIRecord did not decrypt personal identity"
   )
   assertEqual(pii.encryption.algorithm, "AES-256-GCM", "pii-provider: encryption metadata missing")
+  assertEqual(pii.audit.accessCount, 1, "pii-provider: audited read should increment access count")
 
-  const consent = await piiClient.UpdatePIIConsent({
-    storageKey: storageKey,
-    given: true,
-    purposes: ["PROFILE_MATCHING", "COMMUNICATION"],
-    consentVersion: "2.0",
-    actorId: actorId
-  })
-  assertEqual(consent.revision, 2, "pii-provider: UpdatePIIConsent should advance revision")
+  const consent = await runStep("pii-provider: UpdatePIIConsent", () =>
+    piiClient.UpdatePIIConsent({
+      storageKey: storageKey,
+      given: true,
+      purposes: ["PROFILE_MATCHING", "COMMUNICATION"],
+      consentVersion: "2.0",
+      actorId: actorId
+    })
+  )
+  assertEqual(consent.revision, 3, "pii-provider: UpdatePIIConsent should advance revision after audited read")
 
-  await piiClient.RecordPIIAccess({
-    storageKey: storageKey,
-    actorId: actorId,
-    actorType: "USER",
-    purpose: "PROFILE_VIEW",
-    success: true
-  })
-  const audit = await piiClient.GetPIIAuditLog({ storageKey: storageKey })
-  assert(audit.total >= 2, "pii-provider: audit log should include create and access")
+  const access = await runStep("pii-provider: RecordPIIAccess", () =>
+    piiClient.RecordPIIAccess({
+      storageKey: storageKey,
+      actorId: actorId,
+      actorType: "USER",
+      purpose: "PROFILE_VIEW",
+      success: true
+    })
+  )
+  assertEqual(access.revision, 4, "pii-provider: RecordPIIAccess should advance revision after consent update")
 
-  const erasure = await piiClient.RequestPIIErasure({
-    storageKey: storageKey,
-    requestId: requestId,
-    reason: "smoke-test erasure",
-    immediate: true,
-    actorId: actorId
-  })
+  const audit = await runStep("pii-provider: GetPIIAuditLog", () =>
+    piiClient.GetPIIAuditLog({ storageKey: storageKey })
+  )
+  assertEqual(audit.total, 4, "pii-provider: audit log should include create, read, consent update, and access")
+  assertArrayEqual(
+    audit.auditEntries.map((entry) => entry.action),
+    ["CREATE", "READ", "UPDATE", "READ"],
+    "pii-provider: audit log returned wrong action sequence"
+  )
+
+  const erasure = await runStep("pii-provider: RequestPIIErasure", () =>
+    piiClient.RequestPIIErasure({
+      storageKey: storageKey,
+      requestId: requestId,
+      reason: "smoke-test erasure",
+      immediate: true,
+      actorId: actorId
+    })
+  )
   assertEqual(erasure.status, "PENDING_DELETION", "pii-provider: erasure request should mark pending deletion")
+  assertEqual(erasure.revision, 5, "pii-provider: erasure request should advance revision after access")
 
-  const deleted = await piiClient.CompletePIIErasure({
-    storageKey: storageKey,
-    requestId: requestId,
-    actorId: actorId
-  })
+  const deleted = await runStep("pii-provider: CompletePIIErasure", () =>
+    piiClient.CompletePIIErasure({
+      storageKey: storageKey,
+      requestId: requestId,
+      actorId: actorId
+    })
+  )
   assertEqual(deleted.status, "DELETED", "pii-provider: erasure completion should delete the record")
+  assertEqual(deleted.revision, 6, "pii-provider: erasure completion should advance revision after request")
 
   await assertRejectsWithTag(
     "pii-provider: deleted record read",
-    () => piiClient.GetPIIRecord({ storageKey: storageKey }),
+    () => piiClient.GetPIIRecord({
+      storageKey: storageKey,
+      actorId: actorId,
+      actorType: "USER",
+      purpose: "SMOKE_TEST_READ_DELETED"
+    }),
     "PIINotFound"
   )
 
   console.log(`pii-provider: encrypted storage lifecycle ok (${storageKey})`)
 }
+
+console.log("services: smoke tests starting")
+console.log(`profile-provider: ${profileBaseUrl}`)
+console.log(`request-provider: ${requestBaseUrl}`)
+console.log(`pii-provider: ${piiBaseUrl}`)
 
 await waitForHealth("profile-provider", profileBaseUrl)
 await waitForHealth("request-provider", requestBaseUrl)

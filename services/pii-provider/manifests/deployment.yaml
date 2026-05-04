@@ -27,6 +27,11 @@ spec:
           env:
             - name: PORT
               value: "4120"
+            - name: PII_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qb-service-pii-secrets
+                  key: PII_MASTER_KEY
           resources:
             requests:
               memory: "128Mi"

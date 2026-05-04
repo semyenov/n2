@@ -25,9 +25,25 @@ type EncryptInput = {
 }
 
 const LOCAL_KEY_ID = "local-pii-master-key"
-const MASTER_SECRET = process.env.PII_MASTER_KEY ?? "n2-local-pii-master-key"
+const LOCAL_MASTER_SECRET = "n2-local-pii-master-key"
 
-const masterKey = () => createHash("sha256").update(MASTER_SECRET).digest()
+const isLocalEnvironment = () => {
+  const deployment = process.env.DEPLOYMENT_ENVIRONMENT?.trim().toLowerCase()
+  const nodeEnv = process.env.NODE_ENV?.trim().toLowerCase()
+  if (deployment !== undefined) {
+    return deployment === "local" || deployment === "development" || deployment === "test"
+  }
+  return nodeEnv === "development" || nodeEnv === "test" || process.env.VITEST !== undefined
+}
+
+const masterSecret = () => {
+  const configured = process.env.PII_MASTER_KEY?.trim()
+  if (configured !== undefined && configured.length > 0) return configured
+  if (isLocalEnvironment()) return LOCAL_MASTER_SECRET
+  throw new Error("PII_MASTER_KEY is required outside local/test environments")
+}
+
+const masterKey = (secret: string) => createHash("sha256").update(secret).digest()
 
 const encodeSealed = (iv: Buffer, tag: Buffer, ciphertext: Buffer) =>
   `${iv.toString("base64")}.${tag.toString("base64")}.${ciphertext.toString("base64")}`
@@ -60,7 +76,7 @@ const open = (key: Buffer, sealed: string, aad: string) => {
   return Buffer.concat([decipher.update(ciphertext), decipher.final()])
 }
 
-const encryptLocal = (input: EncryptInput) => {
+const encryptLocal = (secret: string, input: EncryptInput) => {
   if ((input.algorithm ?? "AES-256-GCM") !== "AES-256-GCM") {
     throw new Error("Local PII crypto supports AES-256-GCM only")
   }
@@ -69,7 +85,7 @@ const encryptLocal = (input: EncryptInput) => {
   const keyVersion = input.keyVersion ?? 1
   const encryptedAt = input.encryptedAt ?? DateTime.unsafeMake(new Date().toISOString())
   const encryptedData = seal(dek, Buffer.from(input.plaintextJson), `${input.storageKey}:data`)
-  const encryptedDek = seal(masterKey(), dek, `${input.storageKey}:${LOCAL_KEY_ID}:${keyVersion}`)
+  const encryptedDek = seal(masterKey(secret), dek, `${input.storageKey}:${LOCAL_KEY_ID}:${keyVersion}`)
 
   return new EncryptedPayload({
     encryptedData: encryptedData,
@@ -83,12 +99,12 @@ const encryptLocal = (input: EncryptInput) => {
   })
 }
 
-const decryptLocal = (input: EncryptedInput) => {
+const decryptLocal = (secret: string, input: EncryptedInput) => {
   if (input.encryption.algorithm !== "AES-256-GCM") {
     throw new Error("Local PII crypto supports AES-256-GCM only")
   }
   const dek = open(
-    masterKey(),
+    masterKey(secret),
     input.encryptedDek,
     `${input.storageKey}:${input.encryption.keyId}:${input.encryption.keyVersion ?? 1}`
   )
@@ -104,27 +120,33 @@ export class PIICrypto extends Context.Tag("PIICrypto")<
   }
 >() {}
 
-export const PIICryptoLive = Layer.succeed(PIICrypto, {
-  encrypt: (input) =>
-    Effect.try({
-      try: () => encryptLocal(input),
-      catch: (cause) => cause
-    }),
-  decrypt: (input) =>
-    Effect.try({
-      try: () => decryptLocal(input),
-      catch: (cause) => cause
-    }),
-  rotate: (input) =>
-    Effect.try({
-      try: () => {
-        const plaintextJson = decryptLocal(input)
-        return encryptLocal({
-          storageKey: input.storageKey,
-          plaintextJson,
-          keyVersion: (input.encryption.keyVersion ?? 1) + 1
+export const PIICryptoLive = Layer.effect(
+  PIICrypto,
+  Effect.sync(() => {
+    const secret = masterSecret()
+    return {
+      encrypt: (input) =>
+        Effect.try({
+          try: () => encryptLocal(secret, input),
+          catch: (cause) => cause
+        }),
+      decrypt: (input) =>
+        Effect.try({
+          try: () => decryptLocal(secret, input),
+          catch: (cause) => cause
+        }),
+      rotate: (input) =>
+        Effect.try({
+          try: () => {
+            const plaintextJson = decryptLocal(secret, input)
+            return encryptLocal(secret, {
+              storageKey: input.storageKey,
+              plaintextJson,
+              keyVersion: (input.encryption.keyVersion ?? 1) + 1
+            })
+          },
+          catch: (cause) => cause
         })
-      },
-      catch: (cause) => cause
-    })
-})
+    }
+  })
+)

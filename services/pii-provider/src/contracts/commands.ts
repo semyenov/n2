@@ -196,18 +196,32 @@ export class RecordPIIAccess extends Schema.TaggedRequest<RecordPIIAccess>("Reco
 export class GetPIIRecord extends Schema.TaggedRequest<GetPIIRecord>("GetPIIRecord")(
   "GetPIIRecord",
   {
-    failure: PIINotFound,
+    failure: Schema.Union(PIINotFound, PIIError),
     success: PIIRecordDocument,
-    payload: { storageKey: PIIStorageKey }
+    payload: {
+      storageKey: PIIStorageKey,
+      actorId: Schema.UUID,
+      actorType: ActorType,
+      purpose: Schema.String,
+      ipAddress: Schema.optional(Schema.String),
+      userAgent: Schema.optional(Schema.String)
+    }
   }
 ) {}
 
 export class GetPIIRecordByEntity extends Schema.TaggedRequest<GetPIIRecordByEntity>("GetPIIRecordByEntity")(
   "GetPIIRecordByEntity",
   {
-    failure: PIINotFound,
+    failure: Schema.Union(PIINotFound, PIIError),
     success: PIIRecordDocument,
-    payload: { entityReference: EntityReference }
+    payload: {
+      entityReference: EntityReference,
+      actorId: Schema.UUID,
+      actorType: ActorType,
+      purpose: Schema.String,
+      ipAddress: Schema.optional(Schema.String),
+      userAgent: Schema.optional(Schema.String)
+    }
   }
 ) {}
 
