@@ -6,8 +6,10 @@ export default defineConfig({
     globals: false,
     include: [
       "packages/n2/src/**/*.test.ts",
+      "packages/n2-service-shared/src/**/*.test.ts",
       "services/*/src/**/*.test.ts",
-      "examples/order/**/*.test.ts"
+      "examples/order/**/*.test.ts",
+      "scripts/**/*.test.ts"
     ],
     testTimeout: 10_000,
     coverage: {
@@ -16,6 +18,7 @@ export default defineConfig({
       skipFull: true,
       include: [
         "packages/n2/src/**/*.ts",
+        "packages/n2-service-shared/src/**/*.ts",
         "services/*/src/**/*.ts",
         "examples/order/**/*.ts"
       ],
@@ -29,6 +32,7 @@ export default defineConfig({
         "**/projection-store*.ts",
         "scripts/**",
         "examples/order/projector.ts",
+        "packages/n2-service-shared/src/index.ts",
         "packages/n2/src/adapters/**",
         "packages/n2/src/framework/helpers/*Entrypoint.ts",
         "packages/n2/src/framework/helpers/FetchClient.ts",

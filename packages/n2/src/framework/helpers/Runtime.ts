@@ -13,6 +13,7 @@ import type * as Rpc from "@effect/rpc/Rpc"
 import type * as RpcGroup from "@effect/rpc/RpcGroup"
 import { Migrator } from "@effect/sql"
 import { SqlClient } from "@effect/sql/SqlClient"
+import { SqlError } from "@effect/sql/SqlError"
 import { PgClient } from "@effect/sql-pg"
 import { WorkflowEngine } from "@effect/workflow"
 import * as ClickhouseClient from "@effect/sql-clickhouse/ClickhouseClient"
@@ -83,6 +84,67 @@ export const makeConfiguredClickhouseLayer = () =>
       )
     })
   )
+
+export const clickhouseProjectionInsertSettings = {
+  async_insert: 1,
+  wait_for_async_insert: 1,
+  async_insert_busy_timeout_ms: 25
+} as const
+
+export type ClickhouseProjectionInsertAttributes = Record<string, string | number>
+
+export const withClickhouseInsertSpan = <A, E, R>(
+  effect: Effect.Effect<A, E, R>,
+  table: string,
+  attributes: ClickhouseProjectionInsertAttributes = {}
+) =>
+  Effect.withSpan(effect, `clickhouse.insert ${table}`, {
+    captureStackTrace: false,
+    attributes: {
+      "db.system.name": "clickhouse",
+      "db.operation.name": "insert",
+      "db.collection.name": table,
+      ...attributes
+    }
+  })
+
+export const withClickhouseProjectionInsertSettings = <A, E, R>(
+  ch: ClickhouseClient.ClickhouseClient,
+  effect: Effect.Effect<A, E, R>,
+  table: string,
+  attributes: ClickhouseProjectionInsertAttributes = {}
+) =>
+  ch.withClickhouseSettings(
+    withClickhouseInsertSpan(effect, table, attributes),
+    clickhouseProjectionInsertSettings
+  )
+
+type ClickhouseJsonQueryClient = {
+  readonly query: <Row extends object>(input: {
+    readonly query: string
+    readonly query_params: Record<string, unknown>
+    readonly format: "JSONEachRow"
+  }) => Promise<{
+    readonly json: <Result extends Row>() => Promise<ReadonlyArray<Result>>
+  }>
+}
+
+export const queryClickhouseJsonRows = <Row extends object>(
+  client: ClickhouseJsonQueryClient,
+  query: string,
+  query_params: Record<string, unknown>
+) =>
+  Effect.tryPromise({
+    try: async () => {
+      const result = await client.query<Row>({
+        query,
+        query_params,
+        format: "JSONEachRow"
+      })
+      return await result.json<Row>()
+    },
+    catch: (cause) => new SqlError({ cause, message: "Failed to execute ClickHouse query" })
+  })
 
 export const makePgSqlLayer = (options?: { readonly minConnections?: number }) =>
   PgClient.layerConfig(

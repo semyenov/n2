@@ -1,18 +1,22 @@
+import { Buffer } from "node:buffer"
 import * as DateTime from "effect/DateTime"
-import { makeFetchClient } from "@semyenov/n2/helpers"
-import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts/commands.js"
-import { RequestProviderRpcs } from "../services/request-provider/src/contracts/commands.js"
-import { PIIProviderRpcs } from "../services/pii-provider/src/contracts/commands.js"
-
-const profileBaseUrl = process.env.PROFILE_PROVIDER_BASE_URL ?? "http://127.0.0.1:4100"
-const requestBaseUrl = process.env.REQUEST_PROVIDER_BASE_URL ?? "http://127.0.0.1:4110"
-const piiBaseUrl = process.env.PII_PROVIDER_BASE_URL ?? "http://127.0.0.1:4120"
-
-const profileClient = makeFetchClient(ProfileProviderRpcs, `${profileBaseUrl}/rpc/profile-provider`)
-const requestClient = makeFetchClient(RequestProviderRpcs, `${requestBaseUrl}/rpc/request-provider`)
-const piiClient = makeFetchClient(PIIProviderRpcs, `${piiBaseUrl}/rpc/pii-provider`)
-
-const makeUuid = () => crypto.randomUUID()
+import {
+  json,
+  makeUuid,
+  objectExists,
+  piiBaseUrl,
+  piiClient,
+  piiPayloadsBucket,
+  profileBaseUrl,
+  profileClient,
+  queryPostgresScalar,
+  requestBaseUrl,
+  requestClient,
+  sourceAssetsBucket,
+  sqlString,
+  waitForCondition,
+  waitForHealth
+} from "./services-common.js"
 
 const assert = (condition: unknown, message: string) => {
   if (!condition) throw new Error(message)
@@ -68,37 +72,18 @@ const assertRejectsWithTag = async (
   throw new Error(`${name}: expected ${expectedTag}`)
 }
 
-const waitForHealth = async (name: string, url: string) => {
-  const deadline = Date.now() + 30_000
-  let lastError = ""
-
-  console.log(`${name}: waiting for health at ${url}/health`)
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${url}/health`)
-      if (response.ok) {
-        console.log(`${name}: health ok`)
-        return
-      }
-      lastError = `HTTP ${response.status}`
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-    }
-
-    await Bun.sleep(1_000)
-  }
-
-  throw new Error(`${name}: health check failed: ${lastError}`)
-}
-
 const makeSource = (kind: "profile" | "request") => ({
   sourceId: `${kind}-source-1`,
   kind: "manual" as const,
   uri: `manual://${kind}/smoke-test`,
   mediaType: "application/json",
   storageKey: `${kind}-smoke-test.json`,
-  summary: `${kind} smoke-test source`
+  summary: `${kind} smoke-test source`,
+  contentBase64: Buffer.from(JSON.stringify({
+    kind,
+    source: "smoke-test",
+    createdAt: "2026-01-01T00:00:00.000Z"
+  })).toString("base64")
 })
 
 const makeExtraSource = (kind: "profile" | "request") => ({
@@ -109,42 +94,6 @@ const makeExtraSource = (kind: "profile" | "request") => ({
   storageKey: `${kind}-smoke-test.html`,
   summary: `${kind} secondary source`
 })
-
-const json = (value: unknown) => JSON.stringify(value)
-const sqlString = (value: string) => `'${value.replaceAll("'", "''")}'`
-
-const queryPostgresScalar = async (query: string) => {
-  const process = Bun.spawn([
-    "docker",
-    "compose",
-    "exec",
-    "-T",
-    "postgres",
-    "psql",
-    "-U",
-    "n2",
-    "-d",
-    "n2",
-    "-t",
-    "-A",
-    "-c",
-    query
-  ], {
-    stdout: "pipe",
-    stderr: "pipe"
-  })
-  const [stdout, stderr, code] = await Promise.all([
-    new Response(process.stdout).text(),
-    new Response(process.stderr).text(),
-    process.exited
-  ])
-
-  if (code !== 0) {
-    throw new Error(`Postgres query failed (${code}): ${stderr.trim()}`)
-  }
-
-  return stdout.trim()
-}
 
 const verifyEventJournalCount = async (
   name: string,
@@ -642,6 +591,14 @@ const testProfileProvider = async () => {
   assertEqual(profile.piiJurisdiction, "DE", "profile-provider: PII jurisdiction not updated")
   assertEqual(profile.sourceAssets.length, 2, "profile-provider: source assets should be deduplicated and merged")
   assertEqual(profile.sourceAssets[0]?.summary, "profile smoke-test source updated by merge", "profile-provider: duplicate source should be overwritten")
+  assert(
+    profile.sourceAssets[0]?.uri.startsWith(`s3://${sourceAssetsBucket}/profile-provider/${profileId}/profile-source-1/`),
+    "profile-provider: uploaded source asset should point at MinIO"
+  )
+  assert(
+    profile.sourceAssets[0]?.contentBase64 === undefined,
+    "profile-provider: source asset payload should not be stored in state"
+  )
 
   const history = await runStep("profile-provider: GetProfileHistory", () =>
     profileClient.GetProfileHistory({ profileId })
@@ -800,6 +757,14 @@ const testRequestProvider = async () => {
   )
   assertEqual(request.sourceAssets.length, 2, "request-provider: source assets should be deduplicated and merged")
   assertEqual(request.sourceAssets[0]?.summary, "request smoke-test source updated by update", "request-provider: duplicate source should be overwritten")
+  assert(
+    request.sourceAssets[0]?.uri.startsWith(`s3://${sourceAssetsBucket}/request-provider/${requestId}/request-source-1/`),
+    "request-provider: uploaded source asset should point at MinIO"
+  )
+  assert(
+    request.sourceAssets[0]?.contentBase64 === undefined,
+    "request-provider: source asset payload should not be stored in state"
+  )
 
   const history = await runStep("request-provider: GetRequestHistory", () =>
     requestClient.GetRequestHistory({ requestId })
@@ -848,8 +813,26 @@ const testPIIProvider = async () => {
   const erasureRequestId = makeUuid()
   const record = makePIIRecord(recordId, profileId, actorId)
   const storageKey = `aggregate:${profileId}:1`
+  const profileJson = makeProfileDocument(profileId)
 
   console.log(`pii-provider: lifecycle start (${storageKey})`)
+
+  await runStep("pii-provider: seed linked profile", () =>
+    profileClient.CreateProfile({
+      profileId,
+      ownerAgentId: "smoke-test-agent",
+      branchId: "main",
+      schemaVersion: "1.0.0",
+      maskedProfileJson: profileJson,
+      metadataJson: json({ source: "smoke-test", stage: "pii-link" }),
+      piiStorageKey: storageKey,
+      piiJson: json({ storageKey }),
+      piiJurisdiction: "RU",
+      actorId: actorId,
+      summary: "Seed profile linked to PII storage key",
+      sources: []
+    })
+  )
 
   const created = await runStep("pii-provider: CreatePIIRecord", () =>
     piiClient.CreatePIIRecord({
@@ -861,6 +844,22 @@ const testPIIProvider = async () => {
 
   assertEqual(created.storageKey, storageKey, "pii-provider: CreatePIIRecord returned wrong storage key")
   assertEqual(created.status, "ACTIVE", "pii-provider: CreatePIIRecord returned wrong status")
+  const encryptedDataRef = await runStep("pii-provider: verify MinIO encrypted payload reference", () =>
+    queryPostgresScalar(`
+      SELECT encrypted_data
+      FROM pii_provider_records
+      WHERE storage_key = ${sqlString(storageKey)}
+    `)
+  )
+  assertEqual(
+    encryptedDataRef,
+    `s3://${piiPayloadsBucket}/${storageKey}/payload.enc`,
+    "pii-provider: encrypted payload should be stored in MinIO"
+  )
+  const encryptedPayloadExists = await runStep("pii-provider: verify MinIO encrypted payload exists", () =>
+    objectExists(piiPayloadsBucket, `${storageKey}/payload.enc`)
+  )
+  assert(encryptedPayloadExists, "pii-provider: encrypted payload object should exist before erasure")
 
   const pii = await runStep("pii-provider: GetPIIRecord", () =>
     piiClient.GetPIIRecord({
@@ -1086,6 +1085,29 @@ const testPIIProvider = async () => {
   )
   assertEqual(deleted.status, "DELETED", "pii-provider: erasure completion should delete the record")
   assertEqual(deleted.revision, 14, "pii-provider: erasure completion should advance revision after request")
+  await runStep("pii-provider: verify MinIO encrypted payload deleted", () =>
+    waitForCondition(
+      "pii-provider: encrypted payload deleted",
+      async () => !(await objectExists(piiPayloadsBucket, `${storageKey}/payload.enc`))
+    )
+  )
+
+  const linkedProfile = await runStep(
+    "pii-provider: verify linked profile PII reference cleared",
+    async () => {
+      let latest = await profileClient.GetProfile({ profileId })
+      await waitForCondition(
+        "pii-provider: linked profile PII reference cleared",
+        async () => {
+          latest = await profileClient.GetProfile({ profileId })
+          return latest.latestPiiStorageKey === "" && latest.piiJurisdiction === ""
+        }
+      )
+      return latest
+    }
+  )
+  assertEqual(linkedProfile.latestPiiStorageKey, "", "pii-provider: profile PII storage key should be cleared after erasure")
+  assertEqual(linkedProfile.piiJurisdiction, "", "pii-provider: profile PII jurisdiction should be cleared after erasure")
 
   await assertRejectsWithTag(
     "pii-provider: deleted record read",

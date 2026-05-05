@@ -1,3 +1,10 @@
+x-provider-object-storage-env: &provider-object-storage-env
+  OBJECT_STORAGE_ENDPOINT: minio
+  OBJECT_STORAGE_PORT: "9000"
+  OBJECT_STORAGE_USE_SSL: "false"
+  OBJECT_STORAGE_ACCESS_KEY: "${MINIO_ROOT_USER:-minioadmin}"
+  OBJECT_STORAGE_SECRET_KEY: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+
 services:
   grafana:
     image: grafana/grafana:latest
@@ -99,6 +106,37 @@ services:
       postgres:
         condition: service_healthy
 
+  minio:
+    image: quay.io/minio/minio:latest
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+    ports:
+      - "${MINIO_API_PORT:-9002}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio-data:/data
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: "${MINIO_ROOT_USER:-minioadmin}"
+      MINIO_ROOT_PASSWORD: "${MINIO_ROOT_PASSWORD:-minioadmin}"
+      SOURCE_ASSETS_BUCKET: "${SOURCE_ASSETS_BUCKET:-n2-source-assets}"
+      PII_PAYLOADS_BUCKET: "${PII_PAYLOADS_BUCKET:-n2-pii-payloads}"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"; do
+          sleep 1
+        done
+        mc mb --ignore-existing "local/$${SOURCE_ASSETS_BUCKET}"
+        mc mb --ignore-existing "local/$${PII_PAYLOADS_BUCKET}"
+
   clickhouse:
     profiles: ["analytics"]
     image: clickhouse/clickhouse-server:latest-alpine
@@ -139,10 +177,12 @@ services:
       context: .
       dockerfile: Dockerfile.services
     environment:
+      <<: *provider-object-storage-env
       DATABASE_URL: postgres://n2:n2@postgres:5432/n2
       DEPLOYMENT_ENVIRONMENT: local
       OBSERVABILITY_ENABLED: true
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      SOURCE_ASSETS_BUCKET: "${SOURCE_ASSETS_BUCKET:-n2-source-assets}"
       PORT: 4100
     ports:
       - "${PROFILE_PROVIDER_PORT:-4100}:4100"
@@ -150,6 +190,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     healthcheck:
@@ -170,10 +212,12 @@ services:
       context: .
       dockerfile: Dockerfile.services
     environment:
+      <<: *provider-object-storage-env
       DATABASE_URL: postgres://n2:n2@postgres:5432/n2
       DEPLOYMENT_ENVIRONMENT: local
       OBSERVABILITY_ENABLED: true
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      SOURCE_ASSETS_BUCKET: "${SOURCE_ASSETS_BUCKET:-n2-source-assets}"
       PORT: 4110
     ports:
       - "${REQUEST_PROVIDER_PORT:-4110}:4110"
@@ -181,6 +225,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     healthcheck:
@@ -201,10 +247,13 @@ services:
       context: .
       dockerfile: Dockerfile.services
     environment:
+      <<: *provider-object-storage-env
       DATABASE_URL: postgres://n2:n2@postgres:5432/n2
       DEPLOYMENT_ENVIRONMENT: local
       OBSERVABILITY_ENABLED: true
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      PII_PAYLOADS_BUCKET: "${PII_PAYLOADS_BUCKET:-n2-pii-payloads}"
+      PROFILE_PROVIDER_BASE_URL: http://profile-provider:4100
       PORT: 4120
       PII_MASTER_KEY: local-compose-pii-master-key
     ports:
@@ -213,6 +262,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       otel-collector:
         condition: service_started
     healthcheck:
@@ -234,6 +285,7 @@ volumes:
   tempo-data:
   loki-data:
   postgres-data:
+  minio-data:
   clickhouse-data:
   clickhouse-logs:
   ch-ui-data:

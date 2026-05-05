@@ -21,6 +21,8 @@ it("package exports support current and documented legacy import paths", () => {
   expect(typeof Helpers.makeEventMessage).toBe("function")
   expect(typeof Runtime.makeConfiguredClickhouseLayer).toBe("function")
   expect(typeof Runtime.makePgSqlLayer).toBe("function")
+  expect(typeof Runtime.withClickhouseProjectionInsertSettings).toBe("function")
+  expect(typeof Runtime.queryClickhouseJsonRows).toBe("function")
   expect(typeof Runtime.makeServerEntrypoint).toBe("function")
   expect(typeof Runtime.makeClusterEntrypoint).toBe("function")
   expect(typeof Runtime.makeReplayInfrastructureLayer).toBe("function")

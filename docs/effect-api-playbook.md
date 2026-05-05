@@ -383,8 +383,9 @@ wait for durable enqueue/publish when the service requires write-through safety,
 but worker drain concurrency should be tuned separately from aggregate command
 serialization.
 
-Snapshots are an optimization, not the source of truth. Snapshot load failures
-should be explicit. Snapshot save cadence should be visible in service wiring.
+Aggregate snapshots are recovery checkpoints, not business snapshot read
+models, and they are not the source of truth. Snapshot load failures should be
+explicit. Snapshot save cadence should be visible in service wiring.
 
 Observability belongs at framework and adapter boundaries: command counters,
 error counters, latency histograms, outbox counters, structured logs, and spans.

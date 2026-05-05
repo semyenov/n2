@@ -4,6 +4,7 @@ WORKDIR /workspace
 
 COPY package.json bun.lock tsconfig.json tsconfig.base.json ./
 COPY packages/n2/package.json ./packages/n2/package.json
+COPY packages/n2-service-shared/package.json ./packages/n2-service-shared/package.json
 COPY examples/order/package.json ./examples/order/package.json
 COPY services/profile-provider/package.json ./services/profile-provider/package.json
 COPY services/request-provider/package.json ./services/request-provider/package.json

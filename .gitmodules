@@ -4,3 +4,6 @@
 [submodule "services/request-provider"]
 	path = services/request-provider
 	url = git@github.com:quaterbit/qb.service.request
+[submodule "services/pii-provider"]
+	path = services/pii-provider
+	url = git@github.com:quaterbit/qb.service.pii

@@ -123,11 +123,11 @@ outbox.makeWorkerLive({
 
 The workflow retries with exponential backoff using `DurableClock.sleep` — survives process restarts.
 
-## Snapshot persistence
+## Aggregate Snapshot Persistence
 
 ```ts
 const snapshots = makeSnapshotService({
-  table: "my_snapshots",
+  table: "my_aggregate_snapshots",
   stateSchema: MyState,
   idColumn: "entity_id"
 })
@@ -139,8 +139,9 @@ Order.toEntityLayer(OrderEntity, {
 })
 ```
 
-For standard SQL snapshots, `makeStandardSnapshotWiring` returns both the live
-layer and entity snapshot ops from the same config.
+For standard SQL aggregate checkpoints, `makeStandardSnapshotWiring` returns
+both the live layer and entity snapshot ops from the same config. These tables
+are runtime recovery checkpoints, not business read-model snapshot tables.
 
 ## Event replay
 

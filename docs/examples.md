@@ -14,7 +14,7 @@ wiring, and an HTTP server.
 | `entity.ts` | Entity and stateful RPC handlers |
 | `events.ts` | EventGroup wiring |
 | `projector.ts` | EventLog projection handlers |
-| `snapshots.ts` | Snapshot persistence |
+| `snapshots.ts` | Aggregate checkpoint persistence |
 | `workflows.ts` | Workflow example |
 | `layers.ts` | Infrastructure composition |
 | `server.ts` | Dev HTTP server |
@@ -29,20 +29,22 @@ bun examples/order/server.ts
 
 **Location**: `services/profile-provider/` (git submodule of `quaterbit/qb.service.profiler`; source under `src/`).
 
-A second submodule `services/request-provider/` follows the same pattern for the request aggregate.
+The `services/request-provider/` and `services/pii-provider/` submodules follow
+the same pattern for request-state and encrypted PII-storage aggregates.
 
-The production-ops reference: snapshots, transactional outbox, durable publish
-workflows, PostgreSQL read projections, replay, and cluster wiring.
+The production-ops reference: aggregate checkpoint snapshots, transactional
+outbox, durable publish workflows, PostgreSQL read projections, replay, and
+cluster wiring.
 
 | File | Purpose |
 |------|---------|
 | `contracts.ts` | Rich event/command/state schemas built with N2 helpers |
 | `aggregate.ts` | `N2.define()` with typed evolve/decide maps |
-| `entity.ts` | `toEntityLayer` with snapshots, postHandle, and read overrides |
+| `entity.ts` | `toEntityLayer` with aggregate checkpoints, postHandle, and read overrides |
 | `projector.ts` | EventLog handlers coordinating projection store and outbox |
 | `outbox.ts` | `makeOutboxJsonService` with worker retry defaults |
 | `workflows.ts` | `makePublishWorkflow` for durable event publishing |
-| `snapshots.ts` | `makeSnapshotService` plus `makeSnapshotOps` |
+| `snapshots.ts` | `makeSnapshotService` plus `makeSnapshotOps` for aggregate checkpoints |
 | `replay.ts` | `makeReplayProgram` for projection rebuilds |
 | `layers.ts` | Dev and cluster infrastructure composition |
 | `server.ts` | Dev HTTP server |
@@ -55,6 +57,19 @@ bun services/profile-provider/src/server.ts
 bun services/profile-provider/src/replay.ts --dry-run
 ```
 
+Service Dockerfiles are built from the monorepo root, not from inside each
+submodule. The root context is required for workspace packages and local service
+contract exports:
+
+```bash
+docker build -f services/profile-provider/Dockerfile .
+docker build -f services/request-provider/Dockerfile .
+docker build -f services/pii-provider/Dockerfile .
+```
+
+Commit service changes inside the service submodule first. Then commit the
+updated submodule pointer, root package metadata, and docs in this repository.
+
 ### Starting the profile provider cluster
 
 `services/profile-provider/src/cluster.ts` runs the profile provider through `@effect/cluster`
@@ -63,8 +78,8 @@ cluster storage while exposing JSON-RPC over HTTP.
 
 Required infrastructure:
 
-- PostgreSQL, via `DATABASE_URL`; used for sharding storage, snapshots, event
-  journal, migrations, outbox, and read projections.
+- PostgreSQL, via `DATABASE_URL`; used for sharding storage, aggregate
+  checkpoints, event journal, migrations, outbox, and read projections.
 
 Environment variables:
 

@@ -85,6 +85,23 @@ const OrderHandlers = Order.toStatefulRpcHandlers(OrderRpcs, {
 | `examples/order/` | Medium | commands, projections, snapshots, workflows |
 | `services/profile-provider/` | Advanced (submodule) | snapshots, outbox, ClickHouse, replay |
 | `services/request-provider/` | Advanced (submodule) | snapshots, outbox, ClickHouse, replay |
+| `services/pii-provider/` | Advanced (submodule) | encrypted payload storage, snapshots, outbox, replay |
+
+## Service Docker images
+
+The advanced services are git submodules, but their Dockerfiles use the
+monorepo root as the build context so workspace packages and service contract
+exports resolve consistently. Build them from this directory:
+
+```bash
+docker build -f services/profile-provider/Dockerfile .
+docker build -f services/request-provider/Dockerfile .
+docker build -f services/pii-provider/Dockerfile .
+```
+
+When preparing commits, commit service changes inside the affected submodule
+first, then commit the updated submodule pointer and root package/docs changes
+in this repository.
 
 ## Effect-TS integration
 

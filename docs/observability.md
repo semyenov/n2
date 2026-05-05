@@ -6,13 +6,13 @@ that telemetry to Grafana, Tempo, Prometheus, and Loki.
 
 ## Local Docker Compose
 
-Start the profile and request providers with the local observability stack:
+Start the profile, request, and PII providers with the local observability stack:
 
 ```bash
 docker compose up -d --build
 ```
 
-The Compose stack enables observability for both services with:
+The Compose stack enables observability for the provider services with:
 
 ```bash
 OBSERVABILITY_ENABLED=true
@@ -32,13 +32,19 @@ The UI endpoints are:
 - Tempo: <http://localhost:3200>
 - Loki: <http://localhost:3100>
 - Postgres UI: <http://localhost:8081>
+- MinIO API: <http://localhost:9002>
+- MinIO console: <http://localhost:9001>
 
 For Postgres UI, use system `PostgreSQL`, server `postgres`, username `n2`,
 password `n2`, and database `n2`.
 
+For MinIO, use the local Compose credentials `minioadmin` / `minioadmin`.
+Provider services use MinIO for source asset payloads and encrypted PII
+payloads.
+
 If any of those ports are already taken, set `GRAFANA_PORT`,
-`PROMETHEUS_PORT`, `TEMPO_PORT`, `LOKI_PORT`, or `POSTGRES_UI_PORT` before
-starting Compose. For example:
+`PROMETHEUS_PORT`, `TEMPO_PORT`, `LOKI_PORT`, `POSTGRES_UI_PORT`,
+`MINIO_API_PORT`, or `MINIO_CONSOLE_PORT` before starting Compose. For example:
 
 ```bash
 GRAFANA_PORT=3334 PROMETHEUS_PORT=9092 docker compose up -d --build
@@ -63,6 +69,10 @@ STRESS_SERVICES=pii-provider bun run stress:services
 In Postgres UI, inspect operational read models such as
 `profile_provider_profiles_read`, `request_provider_requests_read`, and
 `pii_provider_records`.
+
+Tables named `*_aggregate_snapshots` are entity recovery checkpoints. Business
+snapshot rows live in `profile_provider_snapshots_read` and
+`request_provider_snapshots_read`.
 
 ClickHouse is optional analytics infrastructure. Start it only when you need
 the ClickHouse projection tables or SQL playground:
@@ -119,7 +129,7 @@ For low-level troubleshooting:
 ```bash
 docker compose ps
 docker compose logs -f otel-collector
-docker compose logs -f grafana tempo prometheus loki postgres-ui
+docker compose logs -f grafana tempo prometheus loki postgres-ui minio minio-init
 ```
 
 ## Runtime Configuration

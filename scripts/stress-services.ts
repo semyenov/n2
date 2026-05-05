@@ -1,19 +1,19 @@
 import * as DateTime from "effect/DateTime"
-import { makeFetchClient } from "@semyenov/n2/helpers"
-import { PIIProviderRpcs } from "../services/pii-provider/src/contracts/commands.js"
-import { ProfileProviderRpcs } from "../services/profile-provider/src/contracts/commands.js"
-import { RequestProviderRpcs } from "../services/request-provider/src/contracts/commands.js"
-
-const profileBaseUrl = process.env.PROFILE_PROVIDER_BASE_URL ?? "http://127.0.0.1:4100"
-const requestBaseUrl = process.env.REQUEST_PROVIDER_BASE_URL ?? "http://127.0.0.1:4110"
-const piiBaseUrl = process.env.PII_PROVIDER_BASE_URL ?? "http://127.0.0.1:4120"
-
-const profileClient = makeFetchClient(ProfileProviderRpcs, `${profileBaseUrl}/rpc/profile-provider`)
-const requestClient = makeFetchClient(RequestProviderRpcs, `${requestBaseUrl}/rpc/request-provider`)
-const piiClient = makeFetchClient(PIIProviderRpcs, `${piiBaseUrl}/rpc/pii-provider`)
-
-const allServices = ["profile-provider", "request-provider", "pii-provider"] as const
-type ServiceName = typeof allServices[number]
+import {
+  allServices,
+  errorMessage,
+  json,
+  makeUuid,
+  parsePositiveInt,
+  piiBaseUrl,
+  piiClient,
+  profileBaseUrl,
+  profileClient,
+  requestBaseUrl,
+  requestClient,
+  type ServiceName,
+  waitForHealth
+} from "./services-common.js"
 
 interface WorkUnit {
   readonly service: ServiceName
@@ -39,16 +39,6 @@ const serviceAliases: Record<string, ServiceName> = {
   "request-provider": "request-provider",
   pii: "pii-provider",
   "pii-provider": "pii-provider"
-}
-
-const parsePositiveInt = (name: string, defaultValue: number) => {
-  const raw = process.env[name]
-  if (raw === undefined || raw.trim() === "") return defaultValue
-  const value = Number(raw)
-  if (!Number.isInteger(value) || value <= 0) {
-    throw new Error(`${name} must be a positive integer, got ${raw}`)
-  }
-  return value
 }
 
 const parseServices = (): ReadonlyArray<ServiceName> => {
@@ -77,16 +67,9 @@ const services = parseServices()
 const measurements: Array<Measurement> = []
 const failures: Array<Failure> = []
 
-const json = (value: unknown) => JSON.stringify(value)
-
-const makeUuid = () => crypto.randomUUID()
-
 const formatMs = (value: number) => `${value.toFixed(1)}ms`
 
 const formatRate = (value: number) => `${value.toFixed(1)}/s`
-
-const errorMessage = (error: unknown) =>
-  error instanceof Error ? error.stack ?? error.message : String(error)
 
 const percentile = (values: ReadonlyArray<number>, fraction: number) => {
   if (values.length === 0) return 0
@@ -104,25 +87,6 @@ const record = async <A>(operation: string, run: () => Promise<A>) => {
     measurements.push({ operation, durationMs: performance.now() - start, ok: false })
     throw error
   }
-}
-
-const waitForHealth = async (name: ServiceName, baseUrl: string) => {
-  const deadline = Date.now() + healthTimeoutMs
-  let lastError = ""
-
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`${baseUrl}/health`)
-      if (response.ok) return
-      lastError = `HTTP ${response.status}`
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : String(error)
-    }
-
-    await Bun.sleep(1_000)
-  }
-
-  throw new Error(`${name}: health check failed: ${lastError}`)
 }
 
 const makeSource = (kind: "profile" | "request", index: number) => ({
@@ -562,7 +526,9 @@ await Promise.all(
         ? profileBaseUrl
         : service === "request-provider"
           ? requestBaseUrl
-          : piiBaseUrl
+          : piiBaseUrl,
+      healthTimeoutMs,
+      { log: false }
     )
   )
 )

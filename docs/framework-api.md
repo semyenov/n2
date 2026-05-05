@@ -112,10 +112,11 @@ remain exported for compatibility.
 
 ### `makeSnapshotService({ table, stateSchema, idColumn? })`
 
-Generic SQL snapshot persistence. Returns `.makeLive(tag)` → `Layer`.
+Generic SQL aggregate checkpoint persistence. Returns `.makeLive(tag)` →
+`Layer`.
 
 ```ts
-const snapshots = makeSnapshotService({ table: "my_snapshots", stateSchema: MyState })
+const snapshots = makeSnapshotService({ table: "my_aggregate_snapshots", stateSchema: MyState })
 class MySnapshots extends Context.Tag("MySnapshots")<MySnapshots, SnapshotService<MyState>>() {}
 const MySnapshotsLive = snapshots.makeLive(MySnapshots)
 ```
@@ -177,7 +178,7 @@ const MyOutboxWorkerLive = outbox.makeWorkerLive({
 ### `makeStandardSnapshotWiring({ tag, table, stateSchema, idColumn?, every })`
 
 Combines `makeSnapshotService(...).makeLive(tag)` and `makeSnapshotOps(tag, every)`
-for services that use the standard SQL snapshot table shape.
+for services that use the standard SQL aggregate checkpoint table shape.
 
 ### `makeStandardOutboxWiring({ tag, table, schema, publish, metricsPrefix? })`
 
